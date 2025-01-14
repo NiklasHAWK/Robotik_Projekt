@@ -1,0 +1,316 @@
+Um das Bild zu calibrieren:
+
+1. Terminal:
+(mit Turtlebot verbinden)
+ - roslaunch turtlebot3_bringup turtlebot3_robot.launch
+ 
+ 2. Terminal:
+(mit Turtlebot verbinden)
+ - roslaunch turtlebot3_bringup turtlebot3_rpicamera.launch
+ 
+ 
+( 
+3. Terminal:
+(Auf dem PC)
+ - rqt_image_view
+ 
+ 
+ Links:
+ https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_raspi_cam/
+ https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
+ http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration
+ 
+ Problem mit Raw-Image beheben:
+ 	ubuntu@amrl-turtlebot7:~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
+ 	Da dann den Parameter setzen: /raspicam_node/enable_raw: True
+	ubuntu@amrl-turtlebot7:~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ roslaunch turtlebot3_rpicamera.launch
+
+ Um das Bild zu flippen: und was noch alles in der Konsole stand
+ 
+		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/enable_raw=true
+		Usage: rosparam set [options] parameter value
+
+		rosparam: error: invalid arguments. Please specify a parameter value
+		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/enable_raw true
+		ubuntu@amrl-turtlebot7:~$ rosparam get /raspicam_node/enable_raw
+		true
+		ubuntu@amrl-turtlebot7:~$ rostopic list
+		/diagnostics
+		/raspicam_node/camera_info
+		/raspicam_node/image/compressed
+		/raspicam_node/parameter_descriptions
+		/raspicam_node/parameter_updates
+		/rosout
+		/rosout_agg
+		ubuntu@amrl-turtlebot7:~$ rostopic list
+		/diagnostics
+		/raspicam_node/camera_info
+		/raspicam_node/image
+		/raspicam_node/image/compressed
+		/raspicam_node/parameter_descriptions
+		/raspicam_node/parameter_updates
+		/rosout
+		/rosout_agg
+		ubuntu@amrl-turtlebot7:~$ rostopic list
+		/diagnostics
+		/raspicam_node/camera_info
+		/raspicam_node/image
+		/raspicam_node/image/compressed
+		/raspicam_node/parameter_descriptions
+		/raspicam_node/parameter_updates
+		/rosout
+		/rosout_agg
+		ubuntu@amrl-turtlebot7:~$ rostopic list
+		/rosout
+		/rosout_agg
+		ubuntu@amrl-turtlebot7:~$ rviz
+
+		Command 'rviz' not found, but can be installed with:
+
+		sudo apt install rviz
+
+		ubuntu@amrl-turtlebot7:~$ rosparam set /r
+		/raspicam_node/ISO                        /raspicam_node/saturation
+		/raspicam_node/awb_mode                   /raspicam_node/sharpness
+		/raspicam_node/brightness                 /raspicam_node/shutter_speed
+		/raspicam_node/camera_frame_id            /raspicam_node/vFlip
+		/raspicam_node/camera_info_url            /raspicam_node/video_stabilisation
+		/raspicam_node/contrast                   /raspicam_node/width
+		/raspicam_node/enable_raw                 /raspicam_node/zoom
+		/raspicam_node/exposure_compensation      /rosdistro
+		/raspicam_node/exposure_mode              /roslaunch/uris/host_10_108_3_113__45445
+		/raspicam_node/framerate                  /rosversion
+		/raspicam_node/hFlip                      /run_id
+		/raspicam_node/height                     
+		ubuntu@amrl-turtlebot7:~$ rosparam set /r
+		/raspicam_node/ISO                        /raspicam_node/saturation
+		/raspicam_node/awb_mode                   /raspicam_node/sharpness
+		/raspicam_node/brightness                 /raspicam_node/shutter_speed
+		/raspicam_node/camera_frame_id            /raspicam_node/vFlip
+		/raspicam_node/camera_info_url            /raspicam_node/video_stabilisation
+		/raspicam_node/contrast                   /raspicam_node/width
+		/raspicam_node/enable_raw                 /raspicam_node/zoom
+		/raspicam_node/exposure_compensation      /rosdistro
+		/raspicam_node/exposure_mode              /roslaunch/uris/host_10_108_3_113__45445
+		/raspicam_node/framerate                  /rosversion
+		/raspicam_node/hFlip                      /run_id
+		/raspicam_node/height                     
+		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip true
+		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip false
+		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip true
+
+ 
+ 
+)
+
+3. Terminal:
+(Auf dem PC)
+rosrun image_transport republish compressed in:=/raspicam_node/image raw out:=/raspicam_node/image_raw
+
+rostopic list
+
+rosrun camera_calibration cameracalibrator.py --size 7x6 --square 0.03 image:=/raspicam_node/image_raw camera:=/raspicam_node
+
+
+rpicamera.launch auf dem turtlebot öffnen um parameter zu verändern, wie kamera drehen, framerate, datei pfad für .yaml datei (kalibrationsdatei) vorgegeben  etc.
+parameter zu finden unter https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
+und "rosparam list" die aktuell verfügbaren anzeigen lassen.
+
+~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
+
+launch datei schreiben um robot und rpicamera etc. in einem zu starten bzw. eine eigene launch datei für den calibrationsvorgang
+
+
+
+Kalibrierung:
+
+		amrl@amrl-pc7:~$ rosrun camera_calibration cameracalibrator.py --size 8x6 --square 0.1 image:=/raspicam_node/image camera:=/raspicam_node
+		Waiting for service /raspicam_node/set_camera_info ...
+		OK
+		*** Added sample 1, p_x = 0.651, p_y = 0.736, p_size = 0.472, skew = 0.034
+		*** Added sample 2, p_x = 0.620, p_y = 0.458, p_size = 0.493, skew = 0.080
+		*** Added sample 3, p_x = 0.566, p_y = 0.262, p_size = 0.516, skew = 0.126
+		*** Added sample 4, p_x = 0.413, p_y = 0.269, p_size = 0.578, skew = 0.056
+		*** Added sample 5, p_x = 0.324, p_y = 0.330, p_size = 0.628, skew = 0.070
+		*** Added sample 6, p_x = 0.377, p_y = 0.390, p_size = 0.579, skew = 0.007
+		*** Added sample 7, p_x = 0.746, p_y = 0.398, p_size = 0.502, skew = 0.107
+		*** Added sample 8, p_x = 0.701, p_y = 0.571, p_size = 0.485, skew = 0.061
+		*** Added sample 9, p_x = 0.566, p_y = 0.512, p_size = 0.525, skew = 0.277
+		*** Added sample 10, p_x = 0.538, p_y = 0.487, p_size = 0.508, skew = 0.504
+		*** Added sample 11, p_x = 0.575, p_y = 0.651, p_size = 0.514, skew = 0.166
+		*** Added sample 12, p_x = 0.586, p_y = 0.652, p_size = 0.531, skew = 0.442
+		*** Added sample 13, p_x = 0.634, p_y = 0.687, p_size = 0.535, skew = 0.295
+		*** Added sample 14, p_x = 0.682, p_y = 0.754, p_size = 0.558, skew = 0.104
+		*** Added sample 15, p_x = 0.675, p_y = 0.825, p_size = 0.577, skew = 0.000
+		*** Added sample 16, p_x = 0.579, p_y = 0.837, p_size = 0.540, skew = 0.066
+		*** Added sample 17, p_x = 0.493, p_y = 0.617, p_size = 0.543, skew = 0.108
+		*** Added sample 18, p_x = 0.449, p_y = 0.495, p_size = 0.587, skew = 0.133
+		*** Added sample 19, p_x = 0.408, p_y = 0.461, p_size = 0.593, skew = 0.343
+		*** Added sample 20, p_x = 0.275, p_y = 0.487, p_size = 0.593, skew = 0.209
+		*** Added sample 21, p_x = 0.270, p_y = 0.640, p_size = 0.613, skew = 0.031
+		*** Added sample 22, p_x = 0.282, p_y = 0.778, p_size = 0.636, skew = 0.001
+		*** Added sample 23, p_x = 0.755, p_y = 0.521, p_size = 0.458, skew = 0.133
+		*** Added sample 24, p_x = 0.555, p_y = 0.542, p_size = 0.459, skew = 0.017
+		*** Added sample 25, p_x = 0.310, p_y = 0.563, p_size = 0.472, skew = 0.022
+		*** Added sample 26, p_x = 0.166, p_y = 0.608, p_size = 0.491, skew = 0.058
+		*** Added sample 27, p_x = 0.659, p_y = 0.391, p_size = 0.457, skew = 0.018
+		*** Added sample 28, p_x = 0.495, p_y = 0.382, p_size = 0.469, skew = 0.035
+		*** Added sample 29, p_x = 0.369, p_y = 0.192, p_size = 0.460, skew = 0.154
+		*** Added sample 30, p_x = 0.292, p_y = 0.211, p_size = 0.439, skew = 0.052
+		*** Added sample 31, p_x = 0.290, p_y = 0.274, p_size = 0.473, skew = 0.264
+		*** Added sample 32, p_x = 0.197, p_y = 0.288, p_size = 0.529, skew = 0.516
+		*** Added sample 33, p_x = 0.228, p_y = 0.384, p_size = 0.538, skew = 0.153
+		*** Added sample 34, p_x = 0.407, p_y = 0.470, p_size = 0.459, skew = 0.001
+		*** Added sample 35, p_x = 0.296, p_y = 0.643, p_size = 0.465, skew = 0.157
+		*** Added sample 36, p_x = 0.410, p_y = 0.497, p_size = 0.461, skew = 0.256
+		*** Added sample 37, p_x = 0.455, p_y = 0.169, p_size = 0.456, skew = 0.001
+		*** Added sample 38, p_x = 0.337, p_y = 0.411, p_size = 0.464, skew = 0.100
+		*** Added sample 39, p_x = 0.192, p_y = 0.482, p_size = 0.465, skew = 0.025
+		*** Added sample 40, p_x = 0.296, p_y = 0.829, p_size = 0.402, skew = 0.113
+		*** Added sample 41, p_x = 0.416, p_y = 0.621, p_size = 0.372, skew = 0.054
+		*** Added sample 42, p_x = 0.583, p_y = 0.554, p_size = 0.379, skew = 0.151
+		*** Added sample 43, p_x = 0.544, p_y = 0.424, p_size = 0.389, skew = 0.314
+		*** Added sample 44, p_x = 0.567, p_y = 0.472, p_size = 0.349, skew = 0.040
+		*** Added sample 45, p_x = 0.693, p_y = 0.436, p_size = 0.303, skew = 0.024
+		*** Added sample 46, p_x = 0.587, p_y = 0.560, p_size = 0.288, skew = 0.286
+		*** Added sample 47, p_x = 0.635, p_y = 0.557, p_size = 0.278, skew = 0.531
+		*** Added sample 48, p_x = 0.607, p_y = 0.478, p_size = 0.296, skew = 0.184
+		*** Added sample 49, p_x = 0.552, p_y = 0.305, p_size = 0.332, skew = 0.432
+		*** Added sample 50, p_x = 0.429, p_y = 0.246, p_size = 0.358, skew = 0.385
+		*** Added sample 51, p_x = 0.574, p_y = 0.651, p_size = 0.296, skew = 0.195
+		*** Added sample 52, p_x = 0.573, p_y = 0.824, p_size = 0.295, skew = 0.169
+		*** Added sample 53, p_x = 0.571, p_y = 0.731, p_size = 0.337, skew = 0.038
+		*** Added sample 54, p_x = 0.866, p_y = 0.348, p_size = 0.402, skew = 0.101
+		*** Added sample 55, p_x = 0.869, p_y = 0.216, p_size = 0.411, skew = 0.176
+		*** Added sample 56, p_x = 0.737, p_y = 0.280, p_size = 0.399, skew = 0.138
+		*** Added sample 57, p_x = 0.592, p_y = 0.000, p_size = 0.426, skew = 0.093
+		*** Added sample 58, p_x = 0.559, p_y = 0.880, p_size = 0.379, skew = 0.048
+		*** Added sample 59, p_x = 0.675, p_y = 0.438, p_size = 0.632, skew = 0.093
+		*** Added sample 60, p_x = 0.699, p_y = 0.625, p_size = 0.661, skew = 0.068
+		*** Added sample 61, p_x = 0.780, p_y = 0.685, p_size = 0.668, skew = 0.121
+		*** Added sample 62, p_x = 0.643, p_y = 0.970, p_size = 0.699, skew = 0.047
+		*** Added sample 63, p_x = 0.651, p_y = 0.753, p_size = 0.711, skew = 0.203
+		*** Added sample 64, p_x = 0.628, p_y = 0.244, p_size = 0.731, skew = 0.214
+		*** Added sample 65, p_x = 0.599, p_y = 0.187, p_size = 0.737, skew = 0.082
+		*** Added sample 66, p_x = 0.478, p_y = 0.077, p_size = 0.760, skew = 0.079
+		*** Added sample 67, p_x = 0.362, p_y = 0.000, p_size = 0.781, skew = 0.080
+		*** Added sample 68, p_x = 0.310, p_y = 0.179, p_size = 0.802, skew = 0.070
+		*** Added sample 69, p_x = 0.335, p_y = 0.396, p_size = 0.821, skew = 0.068
+		*** Added sample 70, p_x = 0.383, p_y = 0.963, p_size = 0.838, skew = 0.064
+		*** Added sample 71, p_x = 0.644, p_y = 0.695, p_size = 0.583, skew = 0.844
+		*** Added sample 72, p_x = 0.639, p_y = 0.618, p_size = 0.557, skew = 0.976
+		*** Added sample 73, p_x = 0.642, p_y = 0.477, p_size = 0.491, skew = 1.000
+		*** Added sample 74, p_x = 0.583, p_y = 0.531, p_size = 0.497, skew = 0.769
+		**** Calibrating ****
+		mono pinhole calibration...
+		*** Added sample 75, p_x = 0.700, p_y = 0.372, p_size = 0.573, skew = 0.357
+		D = [0.1095646412993115, -0.12979554702884238, -0.0019383187293987377, 0.00429491326174726, 0.0]
+		K = [851.4465703226101, 0.0, 487.7390166568014, 0.0, 853.8968390116363, 328.59422342610844, 0.0, 0.0, 1.0]
+		R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+		P = [871.1598510742188, 0.0, 491.0588578749739, 0.0, 0.0, 875.7046508789062, 326.72698210691124, 0.0, 0.0, 0.0, 1.0, 0.0]
+		None
+		# oST version 5.0 parameters
+
+
+		[image]
+
+		width
+		960
+
+		height
+		720
+
+		[narrow_stereo]
+
+		camera matrix
+		851.446570 0.000000 487.739017
+		0.000000 853.896839 328.594223
+		0.000000 0.000000 1.000000
+
+		distortion
+		0.109565 -0.129796 -0.001938 0.004295 0.000000
+
+		rectification
+		1.000000 0.000000 0.000000
+		0.000000 1.000000 0.000000
+		0.000000 0.000000 1.000000
+
+		projection
+		871.159851 0.000000 491.058858 0.000000
+		0.000000 875.704651 326.726982 0.000000
+		0.000000 0.000000 1.000000 0.000000
+
+		**** Calibrating ****
+		mono pinhole calibration...
+		D = [0.10666882270319071, -0.12539780450168617, -0.001726905096066946, 0.004531495175515289, 0.0]
+		K = [850.213930246513, 0.0, 488.79205259320355, 0.0, 852.5368755364665, 328.9484688433765, 0.0, 0.0, 1.0]
+		R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+		P = [869.3806762695312, 0.0, 492.3162640018236, 0.0, 0.0, 874.2368774414062, 327.23692284993376, 0.0, 0.0, 0.0, 1.0, 0.0]
+		None
+		# oST version 5.0 parameters
+
+
+		[image]
+
+		width
+		960
+
+		height
+		720
+
+		[narrow_stereo]
+
+		camera matrix
+		850.213930 0.000000 488.792053
+		0.000000 852.536876 328.948469
+		0.000000 0.000000 1.000000
+
+		distortion
+		0.106669 -0.125398 -0.001727 0.004531 0.000000
+
+		rectification
+		1.000000 0.000000 0.000000
+		0.000000 1.000000 0.000000
+		0.000000 0.000000 1.000000
+
+		projection
+		869.380676 0.000000 492.316264 0.000000
+		0.000000 874.236877 327.236923 0.000000
+		0.000000 0.000000 1.000000 0.000000
+
+		('Wrote calibration data to', '/tmp/calibrationdata.tar.gz')
+		D = [0.10666882270319071, -0.12539780450168617, -0.001726905096066946, 0.004531495175515289, 0.0]
+		K = [850.213930246513, 0.0, 488.79205259320355, 0.0, 852.5368755364665, 328.9484688433765, 0.0, 0.0, 1.0]
+		R = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+		P = [869.3806762695312, 0.0, 492.3162640018236, 0.0, 0.0, 874.2368774414062, 327.23692284993376, 0.0, 0.0, 0.0, 1.0, 0.0]
+		# oST version 5.0 parameters
+
+
+		[image]
+
+		width
+		960
+
+		height
+		720
+
+		[narrow_stereo]
+
+		camera matrix
+		850.213930 0.000000 488.792053
+		0.000000 852.536876 328.948469
+		0.000000 0.000000 1.000000
+
+		distortion
+		0.106669 -0.125398 -0.001727 0.004531 0.000000
+
+		rectification
+		1.000000 0.000000 0.000000
+		0.000000 1.000000 0.000000
+		0.000000 0.000000 1.000000
+
+		projection
+		869.380676 0.000000 492.316264 0.000000
+		0.000000 874.236877 327.236923 0.000000
+		0.000000 0.000000 1.000000 0.000000
+
