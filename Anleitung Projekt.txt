@@ -316,5 +316,36 @@ Kalibrierung:{*
 		869.380676 0.000000 492.316264 0.000000
 		0.000000 874.236877 327.236923 0.000000
 		0.000000 0.000000 1.000000 0.000000
+		
+		
+		Eine Beschreibung über die Bedeutung der Werte findet sich unter 'http://wiki.ros.org/image_pipeline/CameraInfo'
 		*}
+
+	Ergebnis Kalibrierung in der Config für die Kamera speichern:{*
+	(vgl. Ros-Buch S. 210 ff.)
+	
+	// Die ost.txt zu ost.ini umbenennen
+	$ mv ost.txt ost.ini
+	
+	// eine camera.yaml aus der ost.ini mit dem 'camera_calibration_parsers' Paket machen
+	$ rosrun camera_calibration_parsers convert ost.ini camera.yaml
+	
+	// Ordner für die Datei erstellen
+	$ mkdir ~/.ros/camera_info
+	
+	// Datei in den Ordner schieben
+	$ mv camera.yaml ~/.ros/camera_info/
+	
+	*}
+
+	Neues Package erstellen:{*
+	
+	$ cd /home/benutzer/catkin_ws/src
+	& catkin_create_pkg --rosdistro noetic -s roscpp geometry_msgs std_msgs -l BSD -m maintainer_name -a author_name rectified image_node
+	$ cd /home/benutzer/catkin_ws
+	$ catkin_make
+	
+	*}
+
+
 *}
