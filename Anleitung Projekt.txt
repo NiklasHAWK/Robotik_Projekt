@@ -1,31 +1,24 @@
-Um das Bild zu calibrieren:
+Anleitung Projekt
 
-1. Terminal:
-(mit Turtlebot verbinden)
- - roslaunch turtlebot3_bringup turtlebot3_robot.launch
- 
- 2. Terminal:
-(mit Turtlebot verbinden)
- - roslaunch turtlebot3_bringup turtlebot3_rpicamera.launch
- 
- 
-( 
-3. Terminal:
-(Auf dem PC)
- - rqt_image_view
- 
- 
- Links:
+
+Hilfreiche Links:{*
  https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_raspi_cam/
  https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
  http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration
- 
- Problem mit Raw-Image beheben:
- 	ubuntu@amrl-turtlebot7:~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
+
+
+*}
+
+
+Kalibrierung:{*
+	Problem mit Raw-Image beheben:{*
+ 	
+	ubuntu@amrl-turtlebot7:~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
  	Da dann den Parameter setzen: /raspicam_node/enable_raw: True
 	ubuntu@amrl-turtlebot7:~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ roslaunch turtlebot3_rpicamera.launch
-
- Um das Bild zu flippen: und was noch alles in der Konsole stand
+	*}
+	
+	Um das Bild zu flippen: und was noch alles in der Konsole stand{*
  
 		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/enable_raw=true
 		Usage: rosparam set [options] parameter value
@@ -98,31 +91,41 @@ Um das Bild zu calibrieren:
 		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip true
 		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip false
 		ubuntu@amrl-turtlebot7:~$ rosparam set /raspicam_node/vFlip true
+		
+		*}
 
- 
- 
-)
+	1. Terminal:{*
+	(mit Turtlebot verbinden)
+	
+	 - roslaunch turtlebot3_bringup turtlebot3_robot.launch
+	*} 
+	
+	2. Terminal:{*
+	(mit Turtlebot verbinden)
+	
+	 - roslaunch turtlebot3_bringup turtlebot3_rpicamera.launch
+	*}
+	
+	3. Terminal:{*
+	(Auf dem PC)
+	
+	rosrun image_transport republish compressed in:=/raspicam_node/image raw out:=/raspicam_node/image_raw
 
-3. Terminal:
-(Auf dem PC)
-rosrun image_transport republish compressed in:=/raspicam_node/image raw out:=/raspicam_node/image_raw
+	rostopic list
 
-rostopic list
-
-rosrun camera_calibration cameracalibrator.py --size 7x6 --square 0.03 image:=/raspicam_node/image_raw camera:=/raspicam_node
+	rosrun camera_calibration cameracalibrator.py --size 7x6 --square 0.03 image:=/raspicam_node/image_raw camera:=/raspicam_node
 
 
-rpicamera.launch auf dem turtlebot öffnen um parameter zu verändern, wie kamera drehen, framerate, datei pfad für .yaml datei (kalibrationsdatei) vorgegeben  etc.
-parameter zu finden unter https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
-und "rosparam list" die aktuell verfügbaren anzeigen lassen.
+	rpicamera.launch auf dem turtlebot öffnen um parameter zu verändern, wie kamera drehen, framerate, datei pfad für .yaml datei (kalibrationsdatei) vorgegeben  etc.
+	parameter zu finden unter https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
+	und "rosparam list" die aktuell verfügbaren anzeigen lassen.
 
-~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
+	~/catkin_ws/src/turtlebot3/turtlebot3_bringup/launch$ nano turtlebot3_rpicamera.launch 
 
-launch datei schreiben um robot und rpicamera etc. in einem zu starten bzw. eine eigene launch datei für den calibrationsvorgang
-
-
-
-Kalibrierung:
+	launch datei schreiben um robot und rpicamera etc. in einem zu starten bzw. eine eigene launch datei für den calibrationsvorgang
+	*}
+	
+	Ergebnis Kalibrierung:{*
 
 		amrl@amrl-pc7:~$ rosrun camera_calibration cameracalibrator.py --size 8x6 --square 0.1 image:=/raspicam_node/image camera:=/raspicam_node
 		Waiting for service /raspicam_node/set_camera_info ...
@@ -313,4 +316,5 @@ Kalibrierung:
 		869.380676 0.000000 492.316264 0.000000
 		0.000000 874.236877 327.236923 0.000000
 		0.000000 0.000000 1.000000 0.000000
-
+		*}
+*}
