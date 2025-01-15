@@ -1,6 +1,10 @@
 Anleitung Projekt
 
 
+Wichtig für Linkugel
+ - camera kalibrierung cue Parameter angucken (Den bekommt man normalerweise )
+
+
 Hilfreiche Links:{*
  https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_raspi_cam/
  https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
