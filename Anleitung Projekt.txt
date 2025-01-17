@@ -1,6 +1,9 @@
 Anleitung Projekt
 
 
+Wenn später noch zeit ist, die launch datei schreiben, mit der sich die anderen launches öffnen
+
+
 Wichtig für Linkugel
  - camera kalibrierung cue Parameter angucken (Den bekommt man normalerweise )
 
@@ -9,6 +12,13 @@ Hilfreiche Links:{*
  https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_raspi_cam/
  https://github.com/UbiquityRobotics/raspicam_node?tab=readme-ov-file
  http://wiki.ros.org/camera_calibration/Tutorials/MonocularCalibration
+ 
+ http://docs.ros.org/en/noetic/api/image_transport/html/classimage__transport_1_1Subscriber.html
+ 
+ cv:
+ 	https://docs.opencv.org/4.x/d3/d63/classcv_1_1Mat.html
+ 	https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga7dfb72c9cf9780a347fbe3d1c47e5d5a
+ 	
 
 
 *}
@@ -350,6 +360,17 @@ Kalibrierung:{*
 	$ catkin_make
 	
 	*}
+	
+	
+	KameraKalibrierung im ros Buch S.210ff.
+	
+	rectified_Image_node angepasst, inhalt aus der camera.yaml asugelesen und werte in rectified_image_node kopiert.
+	alternativ könnte man über rosparam load ~/.ros/camera_info/camer.yaml /camera die camera_matrix und die distrotion_coefficients in den /camera namespasce laden und mit 
+	prüfen über rosparam get /camera
+	nh.getParam("/camera/camera_matrix/data",camera_matrix);
+	nh.getParam("/camera/distrotion_coefficients/data",dist_coeffs);
+	
+	
 
 
 *}
