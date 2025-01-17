@@ -1,8 +1,0 @@
-<launch>
-	<node
-		
-	</node>
-	<node
-		
-	</node>
-</launch >
