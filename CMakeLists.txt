@@ -142,6 +142,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
  add_executable(rectified_image_node src/rectified_image_node.cpp)
  add_executable(initial_launch src/initial_launch.cpp)
+ add_executable(homography_node src/homography_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -161,6 +162,12 @@ include_directories(
    ${cv_bridge_LIBRARIES}
    ${image_transport_LIBRARIES}
    ${sensor_msgs_LIBRARIES}
+ )
+ 
+ target_link_libraries(homography_node
+   ${catkin_LIBRARIES}
+   ${roscpp_LIBRARIES}
+   ${OpenCV_LIBRARIES}
  )
 
 #############
