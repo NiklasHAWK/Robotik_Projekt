@@ -374,3 +374,350 @@ Kalibrierung:{*
 
 
 *}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Bird Eye View Node, wenn Yaml einlesen geht
+
+#include "ros/ros.h"
+#include "image_transport/image_transport.h"
+#include "opencv2/opencv.hpp"
+#include "cv_bridge/cv_bridge.h"
+#include "sensor_msgs/Image.h"
+#include "yaml-cpp/yaml.h"
+#include <vector>
+#include <iostream>
+#include <fstream>
+
+// Kameraparameter
+cv::Mat intrinsic, distortion, rectification, projection;
+bool homography_initialized = false;
+cv::Mat homography;
+const float CAMERA_HEIGHT = 0.117f;  // Kamerahöhe in Metern
+
+void loadCameraParameters(const std::string& yaml_path) {
+    YAML::Node config = YAML::LoadFile(yaml_path);
+
+    if (config["camera_matrix"]) {
+        auto data = config["camera_matrix"]["data"].as<std::vector<double>>();
+        intrinsic = cv::Mat(3, 3, CV_64F, data.data()).clone();
+    } else {
+        ROS_ERROR("Keine 'camera_matrix' gefunden!");
+        exit(EXIT_FAILURE);
+    }
+
+    if (config["distortion_coefficients"]) {
+        auto data = config["distortion_coefficients"]["data"].as<std::vector<double>>();
+        distortion = cv::Mat(1, data.size(), CV_64F, data.data()).clone();
+    } else {
+        ROS_ERROR("Keine 'distortion_coefficients' gefunden!");
+        exit(EXIT_FAILURE);
+    }
+
+    if (config["rectification_matrix"]) {
+        auto data = config["rectification_matrix"]["data"].as<std::vector<double>>();
+        rectification = cv::Mat(3, 3, CV_64F, data.data()).clone();
+    }
+
+    if (config["projection_matrix"]) {
+        auto data = config["projection_matrix"]["data"].as<std::vector<double>>();
+        projection = cv::Mat(3, 4, CV_64F, data.data()).clone();
+    }
+
+    ROS_INFO("Kameraparameter erfolgreich aus camera.yaml geladen.");
+}
+
+void computeHomography(const cv::Mat& image, cv::Size board_size) {
+    std::vector<cv::Point2f> corners;
+    bool found = cv::findChessboardCorners(image, board_size, corners,
+                                           cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_FILTER_QUADS);
+
+    if (!found) {
+        ROS_WARN("Schachbrett nicht gefunden! Bitte das Schachbrett korrekt positionieren.");
+        return;
+    }
+
+    // Subpixelgenaue Anpassung
+    cv::Mat gray;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    cv::cornerSubPix(gray, corners, cv::Size(11, 11), cv::Size(-1, -1),
+                     cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.1));
+
+    // Definiere reale Schachbrettpunkte und Bildpunkte
+    std::vector<cv::Point2f> object_points = {
+    {0.0f, 0.0f},
+    {static_cast<float>(board_size.width - 1), 0.0f},
+    {0.0f, static_cast<float>(board_size.height - 1)},
+    {static_cast<float>(board_size.width - 1), static_cast<float>(board_size.height - 1)}
+    };
+
+    std::vector<cv::Point2f> image_points = {
+        corners[0],
+        corners[board_size.width - 1],
+        corners[(board_size.height - 1) * board_size.width],
+        corners[(board_size.height - 1) * board_size.width + (board_size.width - 1)]
+    };
+
+    // Berechne die Homographie-Matrix
+    homography = cv::getPerspectiveTransform(object_points, image_points);
+    homography_initialized = true;
+    ROS_INFO("Homographie-Matrix erfolgreich berechnet.");
+}
+
+void processImage(const cv::Mat& image) {
+    if (!homography_initialized) {
+        ROS_WARN("Homographie-Matrix nicht initialisiert! Bitte Schachbrett-Kalibrierung durchführen.");
+        return;
+    }
+
+    // Passe die Höhe (Kamerahöhe in Metern) an
+    cv::Mat adjustable_homography = homography.clone();
+    adjustable_homography.at<double>(2, 2) = CAMERA_HEIGHT;
+
+    // Transformiere das Bild
+    cv::Mat birdseye_view;
+    cv::warpPerspective(image, birdseye_view, adjustable_homography, image.size(),
+                        cv::INTER_LINEAR | cv::WARP_INVERSE_MAP | cv::WARP_FILL_OUTLIERS);
+
+    // Zeige das transformierte Bild
+    cv::imshow("Bird's Eye View", birdseye_view);
+    cv::waitKey(1);
+}
+
+void imageCallback(const sensor_msgs::ImageConstPtr& msg) {
+    try {
+        // Konvertiere ROS-Bild in OpenCV-Bild
+        cv::Mat src_image = cv_bridge::toCvShare(msg, "bgr8")->image;
+
+        if (src_image.empty()) {
+            ROS_WARN("Das empfangene Bild ist leer!");
+            return;
+        }
+
+        // Verarbeite das Bild
+        processImage(src_image);
+    } catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+    }
+}
+
+int main(int argc, char** argv) {
+    // ROS-Knoten initialisieren
+    ros::init(argc, argv, "birdseye_node");
+    ros::NodeHandle nh("~");
+
+    // Lade Kameraparameter aus camera.yaml
+    const std::string yaml_path = "/home/amrl/.ros/camera_info/camera.yaml";
+    loadCameraParameters(yaml_path);
+
+    // Schachbrettgröße
+    int board_w = 8;  // Standardmäßig 7x7 Schachbrett
+    int board_h = 7;
+    nh.getParam("board_width", board_w);
+    nh.getParam("board_height", board_h);
+    cv::Size board_size(board_w, board_h);
+
+    // Abonniere das Bild-Topic
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, imageCallback);
+
+    // Schachbrett-Kalibrierung durchführen
+    ros::spinOnce();
+    computeHomography(cv::imread("/home/amrl/catkin_ws/src/robotik_projekt_ws24_nvs_js/Kalibration/Schachbrett_auf_Boden.png"), board_size);
+
+    // ROS-Schleife
+    ros::spin();
+
+    return 0;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Code, bevor ich Chat GPT den nochmal neu machen lasse:
+#include "ros/ros.h"
+#include "image_transport/image_transport.h"
+#include "opencv2/opencv.hpp"
+#include "cv_bridge/cv_bridge.h"
+#include "sensor_msgs/Image.h"
+#include <vector>
+#include <iostream>
+#include <thread>
+
+// Kameraparameter
+cv::Mat intrinsic, distortion, rectification, projection;
+bool homography_initialized = false;
+cv::Mat homography;
+const float CAMERA_HEIGHT = 0.117f;  // Kamerahöhe in Metern
+
+void loadCameraParameters() 
+{
+ROS_INFO("loadCameraParameters");
+    // Kameramatrix
+    intrinsic = (cv::Mat_<double>(3, 3) << 843.074971, 0, 478.388183,
+                                            0, 844.236343, 333.350289,
+                                            0, 0, 1);
+
+    // Verzerrungskoeffizienten
+    distortion = (cv::Mat_<double>(5, 1) << 0.096351, -0.094708, -0.001249, -0.000937, 0);
+
+    // Rectificationsmatrix und Projektionsmatrix (optional, hier nicht verwendet, aber kann angepasst werden)
+    rectification = cv::Mat::eye(3, 3, CV_64F);
+    projection = cv::Mat::zeros(3, 4, CV_64F);
+
+    ROS_INFO("Kameraparameter direkt im Code gesetzt.");
+}
+
+void showImageInSeparateThread(const cv::Mat& image) {
+    // Zeige das Bild in einem neuen Thread, um Blockierungen zu vermeiden
+    cv::namedWindow("Ecken gefunden", cv::WINDOW_NORMAL);
+    cv::imshow("Ecken gefunden", image);
+    cv::waitKey(1);  // Stelle sicher, dass das Bild angezeigt wird
+}
+
+void computeHomography(const cv::Mat& image, cv::Size board_size) 
+{
+    ROS_INFO("computeHomography");
+    std::vector<cv::Point2f> corners;
+    bool found = cv::findChessboardCorners(image, board_size, corners,
+                                           cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE | cv::CALIB_CB_FILTER_QUADS);
+
+    if (!found) {
+        ROS_WARN("Schachbrett nicht gefunden! Bitte das Schachbrett korrekt positionieren.");
+        return;
+    } else {
+        // Zeichne die erkannten Ecken auf dem Bild
+        cv::drawChessboardCorners(image, board_size, corners, found);
+
+        // Rufe den separaten Thread auf, um das Bild anzuzeigen
+        std::thread show_thread(showImageInSeparateThread, image);
+        show_thread.detach();  // Entkoppelt den Thread
+    }
+
+    // Restliche Verarbeitung für Homographie
+    // Subpixelgenaue Anpassung
+    cv::Mat gray;
+    cv::cvtColor(image, gray, cv::COLOR_BGR2GRAY);
+    cv::cornerSubPix(gray, corners, cv::Size(11, 11), cv::Size(-1, -1),
+                     cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::MAX_ITER, 30, 0.1));
+
+    // Definiere reale Schachbrettpunkte und Bildpunkte
+    std::vector<cv::Point2f> object_points = {
+        {0.0f, 0.0f},
+        {static_cast<float>(board_size.width - 1), 0.0f},
+        {0.0f, static_cast<float>(board_size.height - 1)},
+        {static_cast<float>(board_size.width - 1), static_cast<float>(board_size.height - 1)}
+    };
+
+    std::vector<cv::Point2f> image_points = {
+        corners[0],
+        corners[board_size.width - 1],
+        corners[(board_size.height - 1) * board_size.width],
+        corners[(board_size.height - 1) * board_size.width + (board_size.width - 1)]
+    };
+
+    // Berechne die Homographie-Matrix
+    homography = cv::getPerspectiveTransform(object_points, image_points);
+    homography_initialized = true;
+    ROS_INFO("Homographie-Matrix erfolgreich berechnet.");
+}
+
+void processImage(const cv::Mat& image) 
+{
+ROS_INFO("processImage");
+    if (!homography_initialized) {
+        ROS_WARN("Homographie-Matrix nicht initialisiert! Bitte Schachbrett-Kalibrierung durchführen.");
+        return;
+    }
+
+    // Passe die Höhe (Kamerahöhe in Metern) an
+    cv::Mat adjustable_homography = homography.clone();
+    adjustable_homography.at<double>(2, 2) = CAMERA_HEIGHT;
+
+    // Transformiere das Bild
+    cv::Mat birdseye_view;
+    cv::warpPerspective(image, birdseye_view, adjustable_homography, image.size(),
+                        cv::INTER_LINEAR | cv::WARP_INVERSE_MAP | cv::WARP_FILL_OUTLIERS);
+
+    // Zeige das transformierte Bild
+    cv::imshow("Bird's Eye View", birdseye_view);
+    cv::waitKey(1);
+}
+
+void imageCallback(const sensor_msgs::ImageConstPtr& msg) 
+{
+ROS_INFO("imageCallback");
+    try {
+        // Konvertiere ROS-Bild in OpenCV-Bild
+        cv::Mat src_image = cv_bridge::toCvShare(msg, "bgr8")->image;
+
+        if (src_image.empty()) {
+            ROS_WARN("Das empfangene Bild ist leer!");
+            return;
+        }
+
+        // Verarbeite das Bild
+        processImage(src_image);
+    } catch (cv_bridge::Exception& e) {
+        ROS_ERROR("cv_bridge exception: %s", e.what());
+    }
+}
+
+int main(int argc, char** argv) {
+    // ROS-Knoten initialisieren
+    ros::init(argc, argv, "birdseye_node");
+    ros::NodeHandle nh("~");
+
+    // Lade Kameraparameter direkt im Code
+    loadCameraParameters();
+
+    // Ausgabe für Debugging
+    ROS_INFO("loadCameraParameters() wurde erfolgreich aufgerufen.");
+
+    // Schachbrettgröße
+    int board_w = 7;  // Standardmäßig 7x7 Schachbrett
+    int board_h = 7;
+    nh.getParam("board_width", board_w);
+    nh.getParam("board_height", board_h);
+    cv::Size board_size(board_w, board_h);
+
+    // Abonniere das Bild-Topic
+    image_transport::ImageTransport it(nh);
+    image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, imageCallback);
+
+    // Schachbrett-Kalibrierung durchführen
+    ros::spinOnce();
+    computeHomography(cv::imread("/home/amrl/catkin_ws/src/robotik_projekt_ws24_nvs_js/Kalibration/Schachbrett_auf_dem_Boden.png"), board_size);
+
+    // ROS-Schleife
+    ros::spin();
+
+    return 0;
+}
+
+
+
+

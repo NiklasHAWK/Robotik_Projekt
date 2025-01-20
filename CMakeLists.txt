@@ -16,6 +16,7 @@ find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(sensor_msgs REQUIRED)
+#find_package(yaml-cpp REQUIRED)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -104,6 +105,8 @@ find_package(sensor_msgs REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
+CATKIN_DEPENDS roscpp cv_bridge image_transport sensor_msgs 
+#DEPENDS yaml-cpp
 #  INCLUDE_DIRS include
 #  LIBRARIES robotik_projekt_ws24_nvs_js
 #  CATKIN_DEPENDS other_catkin_pkg
@@ -118,13 +121,14 @@ catkin_package(
 ## Your package locations should be listed before other locations
 include_directories(
 # include
-# ${catkin_INCLUDE_DIRS}
+ ${catkin_INCLUDE_DIRS}
 # TODO: Check names of system library include directories (roscpp, geometry_msgs, std_msgs)
   ${roscpp_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
   ${cv_bridge_INCLUDE_DIRS}
   ${image_transport_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
+#  ${yaml-cpp_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -142,7 +146,7 @@ include_directories(
 ## The recommended prefix ensures that target names across packages don't collide
  add_executable(rectified_image_node src/rectified_image_node.cpp)
  add_executable(initial_launch src/initial_launch.cpp)
- add_executable(homography_node src/homography_node.cpp)
+ add_executable(birdseye_node src/birdseye_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -164,10 +168,14 @@ include_directories(
    ${sensor_msgs_LIBRARIES}
  )
  
- target_link_libraries(homography_node
+ target_link_libraries(birdseye_node
    ${catkin_LIBRARIES}
    ${roscpp_LIBRARIES}
    ${OpenCV_LIBRARIES}
+   ${cv_bridge_LIBRARIES}
+   ${image_transport_LIBRARIES}
+   ${sensor_msgs_LIBRARIES}
+#   ${yaml-cpp_LIBRARIES}
  )
 
 #############

@@ -20,6 +20,7 @@ void rectifyImageCallback (const sensor_msgs::ImageConstPtr& msg)
 	sensor_msgs::ImagePtr output_msg = cv_bridge::CvImage(msg->header, "bgr8", undistortedImage).toImageMsg();
 	
 	pub.publish(output_msg);
+	ROS_INFO("Bild gepublished.");
 }
 
 int main(int argc, char **argv)
@@ -32,8 +33,10 @@ int main(int argc, char **argv)
 	cv::Mat identityMatrix = cv::Mat::eye(3, 3, CV_64F);
     	cv::Mat distCoeffs = (cv::Mat_<double>(5, 1) << 0.096351, -0.094708, -0.001249, -0.000937, 0);
     	cv::Size imageSize(960, 720);
+    	ROS_INFO("Matrizen und Vektoren erstellt.");
     	
     	cv::initUndistortRectifyMap(cameraMatrix, distCoeffs, identityMatrix, cameraMatrix, imageSize, CV_32FC1, map1, map2);
+	ROS_INFO("Rektifizierungs Maps erstellt.");
 	
 	image_transport::ImageTransport it(nh);
 	image_transport::Subscriber sub = it.subscribe("raspicam_node/image", 1, rectifyImageCallback);
