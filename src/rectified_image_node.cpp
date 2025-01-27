@@ -20,7 +20,7 @@ void rectifyImageCallback (const sensor_msgs::ImageConstPtr& msg)
 	sensor_msgs::ImagePtr output_msg = cv_bridge::CvImage(msg->header, "bgr8", undistortedImage).toImageMsg();
 	
 	pub.publish(output_msg);
-	ROS_INFO("Bild gepublished.");
+	ROS_INFO("rectified_image gepublished.");
 }
 
 int main(int argc, char **argv)

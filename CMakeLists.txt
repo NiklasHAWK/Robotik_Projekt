@@ -16,7 +16,9 @@ find_package(OpenCV REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(image_transport REQUIRED)
 find_package(sensor_msgs REQUIRED)
-#find_package(yaml-cpp REQUIRED)
+find_package(laser_geometry REQUIRED)
+find_package(pcl_ros REQUIRED)
+find_package(pcl_conversions REQUIRED)
 
 
 ## Uncomment this if the package has a setup.py. This macro ensures
@@ -105,7 +107,7 @@ find_package(sensor_msgs REQUIRED)
 ## CATKIN_DEPENDS: catkin_packages dependent projects also need
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
-CATKIN_DEPENDS roscpp cv_bridge image_transport sensor_msgs 
+CATKIN_DEPENDS roscpp cv_bridge image_transport sensor_msgs laser_geometry pcl_ros pcl_conversions
 #DEPENDS yaml-cpp
 #  INCLUDE_DIRS include
 #  LIBRARIES robotik_projekt_ws24_nvs_js
@@ -128,7 +130,9 @@ include_directories(
   ${cv_bridge_INCLUDE_DIRS}
   ${image_transport_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
-#  ${yaml-cpp_INCLUDE_DIRS}
+  ${laser_geometry_INCLUDE_DIRS}
+  ${pcl_ros_INCLUDE_DIRS}
+  ${pcl_conversions_INCLUDE_DIRS}
 )
 
 ## Declare a C++ library
@@ -147,6 +151,7 @@ include_directories(
  add_executable(rectified_image_node src/rectified_image_node.cpp)
  add_executable(initial_launch src/initial_launch.cpp)
  add_executable(birdseye_node src/birdseye_node.cpp)
+ add_executable(birdseye_with_lidar_node src/birdseye_with_lidar_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -175,7 +180,18 @@ include_directories(
    ${cv_bridge_LIBRARIES}
    ${image_transport_LIBRARIES}
    ${sensor_msgs_LIBRARIES}
-#   ${yaml-cpp_LIBRARIES}
+ )
+
+ target_link_libraries(birdseye_with_lidar_node
+   ${catkin_LIBRARIES}
+   ${roscpp_LIBRARIES}
+   ${OpenCV_LIBRARIES}
+   ${cv_bridge_LIBRARIES}
+   ${image_transport_LIBRARIES}
+   ${sensor_msgs_LIBRARIES}
+   ${laser_geometry_LIBRARIES}
+   ${pcl_ros_LIBRARIES}
+   ${pcl_conversions_LIBRARIES}
  )
 
 #############
