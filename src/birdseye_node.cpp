@@ -1,5 +1,5 @@
 #include <ros/ros.h>
-#include "image_transport/image_transport.h"
+#include <image_transport/image_transport.h>
 #include <sensor_msgs/Image.h>
 #include "opencv2/opencv.hpp"
 #include "cv_bridge/cv_bridge.h"
@@ -102,11 +102,17 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             std::vector<cv::Point2f> objPts(4);
             
             // Die Koordinaten wurden aus der Ausgabe ausgelsen
-            objPts[0] = cv::Point2f(550, 690);
-            objPts[1] = cv::Point2f(410, 690);
-            objPts[2] = cv::Point2f(550, 570);
-            objPts[3] = cv::Point2f(410, 570);
-            
+            objPts[0] = cv::Point2f(480 + 175, 675 -20);
+            objPts[1] = cv::Point2f(480 - 175, 675 -20);
+            objPts[2] = cv::Point2f(480 + 175, 675 - 300 - 20);
+            objPts[3] = cv::Point2f(480 - 175, 675 - 300 - 20);
+                        
+
+            //objPts[0] = cv::Point2f(550, 690);
+            //objPts[1] = cv::Point2f(410, 690);
+            //objPts[2] = cv::Point2f(550, 570);
+            //objPts[3] = cv::Point2f(410, 570);
+
             imgPts[0] = cv::Point2f(750.075317, 673.502136);
             imgPts[1] = cv::Point2f(217.013840, 668.596802);
             imgPts[2] = cv::Point2f(653.700684, 554.289307);
@@ -119,6 +125,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             homography_computed = true;
 
             ROS_INFO("Homography computed successfully.");
+            ROS_INFO_STREAM("Homography Matrix: \n" << homographyMatrix);
         }
 
         cv::Mat birds_image;
@@ -126,6 +133,18 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         // Erzeuge Vogelperspektive
         cv::warpPerspective(image, birds_image, homographyMatrix, image.size(), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP);
         
+        cv::Vec3b gray_value(105, 105, 105);  
+	    cv::Vec3b black_value(0, 0, 0);  
+	    for(int y=0; y<birds_image.rows; y++)
+	    {	
+    	    for(int x=0; x<birds_image.cols; x++)
+    	    {
+	        	if(birds_image.at<cv::Vec3b>(y,x) == black_value)
+                {
+	        		birds_image.at<cv::Vec3b>(cv::Point(x,y)) = gray_value;
+	         	}
+		    }
+	    }
 
         // Zeige Bilder an
         //cv::imshow("Chessboard", image);
@@ -149,8 +168,8 @@ int main(int argc, char** argv) {
     ros::NodeHandle nh;
 
     // Abonniere die Topic mit dem rektifizierten Bild
-    ros::Subscriber sub = nh.subscribe("robotik_projekt/images/rectified_image", 1, imageCallback);
     image_transport::ImageTransport it(nh);
+    image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, imageCallback);
     pub = it.advertise("robotik_projekt/images/birdseye_image", 1);
 
     ros::spin();
