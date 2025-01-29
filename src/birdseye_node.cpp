@@ -121,7 +121,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             
 
             // Berechne Homographie
-            homographyMatrix = cv::getPerspectiveTransform(objPts, imgPts);
+            homographyMatrix = cv::getPerspectiveTransform(imgPts, objPts);
             homography_computed = true;
 
             ROS_INFO("Homography computed successfully.");
@@ -131,7 +131,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         cv::Mat birds_image;
 
         // Erzeuge Vogelperspektive
-        cv::warpPerspective(image, birds_image, homographyMatrix, image.size(), cv::INTER_LINEAR | cv::WARP_INVERSE_MAP);
+        cv::warpPerspective(image, birds_image, homographyMatrix, image.size(), cv::INTER_LINEAR);
         
         cv::Vec3b gray_value(105, 105, 105);  
 	    cv::Vec3b black_value(0, 0, 0);  

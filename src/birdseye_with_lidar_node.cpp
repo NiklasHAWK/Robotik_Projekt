@@ -17,16 +17,16 @@
 
 // Kameramatrix
 cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) << 
-843.074971, 0, 478.388183, 
-0, 844.236343, 333.350289, 
-0, 0, 1);
+843.074971, 0.0, 478.388183, 
+0.0, 844.236343, 333.350289, 
+0.0, 0.0, 1.0);
 
 
 // Homographie
 cv::Mat homographyMatrix = (cv::Mat_<double>(3, 3) << 
-0.7028749275292304, -0.3823789223687673, 137.0961069023721,
- 0.001081982044486128, -0.2664064451738597, 485.3820719761737,
- -8.079803024878184e-06, -0.0008123046168359249, 1);
+-0.6844031534226153, -1.450545517122974, 797.897835011137,
+ 0.02678153217836598, -3.76790286931926, 1825.200883354766,
+ 1.622492288698972e-05, -0.003072405300756105, 1);
 
 
 // Globale Variablen für Publisher und Daten
@@ -42,7 +42,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     std::vector<cv::Point2f> lidar_points;
 	cv::Mat transformedPoint;
 	// Schleife durch alle Messwerte im Scan
-	for (uint16_t i = 0; i < scan_msg->ranges.size() - 1; i++)
+	for (uint16_t i = 0; i < scan_msg->ranges.size(); i++)
 	{
 		
 		// Berechne den Winkel für jedes Range-Element
@@ -53,17 +53,9 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         // Abstand Kamera nach hinten zu lidar = 7.5cm
         cv::Mat T = (cv::Mat_<double>(4,4) << 
         0.0, -1.0,  0.0,   0.0,
-        0.0,  0.0, -1.0,  -0.07,
+        0.0,  0.0, -1.0,  -0.056,
         1.0,  0.0,  0.0,  -0.075,
         0.0,  0.0,  0.0,   1.0); 
-
-
-
-
-
-        // Woher kommen die nachfolgenden Werte?
-
-
 
         // Berechne die kartesischen Koordinaten
         if ((angle > 0 && angle < 0.78539816339 || angle >= 5.49778714378 && angle <= 6.28318530718) && range < 0.65 )
@@ -73,7 +65,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
             
             // height of lidar above ground
             // for bird_eye_image height above ground, normal image height diff between camera
-            double z = -0.175;
+            double z = -0.168;
             // x,y,z auf y,z,x getauscht
             cv::Mat pointMat4D = (cv::Mat_<double>(4, 1) << x, y, z, 1.0);
             cv::Mat pointMat = T * pointMat4D;
@@ -101,6 +93,7 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
     // convert ROS message to opencv object
     cv_bridge::CvImagePtr cv_ptr;
     cv_ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
+
 
 	// cv::Mat aus lidar_coordinates_camera
 	// cv::Mat lidarbirdEyePoints;

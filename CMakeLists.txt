@@ -152,6 +152,7 @@ include_directories(
  add_executable(initial_launch src/initial_launch.cpp)
  add_executable(birdseye_node src/birdseye_node.cpp)
  add_executable(birdseye_with_lidar_node src/birdseye_with_lidar_node.cpp)
+ add_executable(follow_line_node src/follow_line_node.cpp)
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -192,6 +193,15 @@ include_directories(
    ${laser_geometry_LIBRARIES}
    ${pcl_ros_LIBRARIES}
    ${pcl_conversions_LIBRARIES}
+ )
+
+ target_link_libraries(follow_line_node
+   ${catkin_LIBRARIES}
+   ${roscpp_LIBRARIES}
+   ${OpenCV_LIBRARIES}
+   ${cv_bridge_LIBRARIES}
+   ${image_transport_LIBRARIES}
+   ${sensor_msgs_LIBRARIES}
  )
 
 #############
