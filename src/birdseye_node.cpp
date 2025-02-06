@@ -100,18 +100,18 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             // Definiere Bild- und Objektpunkte
             std::vector<cv::Point2f> imgPts(4);
             std::vector<cv::Point2f> objPts(4);
-            
+            /*
             // Die Koordinaten wurden aus der Ausgabe ausgelsen
             objPts[0] = cv::Point2f(480 + 175, 675 -20);
             objPts[1] = cv::Point2f(480 - 175, 675 -20);
             objPts[2] = cv::Point2f(480 + 175, 675 - 300 - 20);
             objPts[3] = cv::Point2f(480 - 175, 675 - 300 - 20);
-                        
+            */
 
-            //objPts[0] = cv::Point2f(550, 690);
-            //objPts[1] = cv::Point2f(410, 690);
-            //objPts[2] = cv::Point2f(550, 570);
-            //objPts[3] = cv::Point2f(410, 570);
+            objPts[0] = cv::Point2f(480 + 180, 675 - 20);          // (480+180, 655) -> (660, 655)
+            objPts[1] = cv::Point2f(480 - 180, 675 - 20);          // (480-180, 655) -> (300, 655)
+            objPts[2] = cv::Point2f(480 + 180, 675 - 300 - 20);     // (480+180, 355) -> (660, 355)
+            objPts[3] = cv::Point2f(480 - 180, 675 - 300 - 20);     // (480-180, 355) -> (300, 355)
 
             imgPts[0] = cv::Point2f(750.075317, 673.502136);
             imgPts[1] = cv::Point2f(217.013840, 668.596802);

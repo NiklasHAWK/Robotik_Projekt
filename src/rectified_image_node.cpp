@@ -1,6 +1,6 @@
 #include "ros/ros.h"
 #include "image_transport/image_transport.h"
-#include "sensor_msgs/Image.h"
+#include "sensor_msgs/CompressedImage.h"
 #include "opencv2/opencv.hpp"
 #include "cv_bridge/cv_bridge.h"
 
@@ -8,7 +8,7 @@
 image_transport::Publisher pub;
 cv::Mat map1, map2;
 
-void rectifyImageCallback (const sensor_msgs::ImageConstPtr& msg)
+void rectifyImageCallback (const sensor_msgs::CompressedImageConstPtr& msg)
 {
 	// convert ROS message to opencv object
     	cv_bridge::CvImagePtr cv_ptr;
@@ -39,7 +39,7 @@ int main(int argc, char **argv)
 	ROS_INFO("Rektifizierungs Maps erstellt.");
 	
 	image_transport::ImageTransport it(nh);
-	image_transport::Subscriber sub = it.subscribe("raspicam_node/image", 1, rectifyImageCallback);
+	ros::Subscriber sub = nh.subscribe("raspicam_node/image/compressed", 1, rectifyImageCallback);
 	pub = it.advertise("robotik_projekt/images/rectified_image", 1);
 	
 	ros::spin();
