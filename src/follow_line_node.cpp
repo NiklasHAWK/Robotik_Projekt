@@ -6,6 +6,7 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
+#include "std_msgs/Bool.h"
 #include <cmath>
 
 // ----- Parameter, die du anpassen musst -----
@@ -22,6 +23,15 @@ ros::Publisher cmd_vel_pub;
 
 // Letzter ermittelter Mittelwert für die Spurmitte (Tiefpass-Filter)
 static int last_middle_x = 480;
+
+
+bool obstacleDetected = false;
+
+
+void obstacleFlagCallback(const std_msgs::Bool::ConstPtr& msg)
+{
+    obstacleDetected = msg->data;
+}
 
 // Hilfsfunktion zum Finden der linken/rechten Bounding Box
 std::pair<cv::Rect, cv::Rect> findLeftAndRightContours(const std::vector<cv::Rect>& boundingBoxes)
@@ -61,7 +71,7 @@ double purePursuitOmega(double xL, double yL, double v)
     double kappa = 2.0 * yL / (L * L);
 
     // Winkelgeschwindigkeit w = v * kappa
-    double gain  = 3.0; // Verstärkungsfaktor
+    double gain  = 2.5; // Verstärkungsfaktor
     double w = gain * v * kappa;
     return w;
 }
@@ -198,7 +208,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     double yL = -offset_px * PIXEL_TO_METER;
 
     // 10.3) xL = konstanter Lookahead in m (z.B. 0.30 m vor dem Roboter)
-    double xL = LOOKAHEAD_X + PIXEL_TO_METER * 360;
+    double xL = LOOKAHEAD_X + PIXEL_TO_METER * 650;
 
     // 10.4) Winkelgeschwindigkeit via Pure-Pursuit-Formel
     omega = purePursuitOmega(xL, yL, LINEAR_SPEED);
@@ -223,7 +233,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         cv::line(img, cv::Point(rx, 0), cv::Point(rx, img.rows), cv::Scalar(255,0,0), 2);
     }
     cv::line(img, cv::Point(middle_x, 0), cv::Point(middle_x, img.rows), cv::Scalar(0,255,0), 2);
-    cv::line(img, cv::Point(0, 360), cv::Point(959, 360), cv::Scalar(0,255,0), 2);
+    cv::line(img, cv::Point(0, 650), cv::Point(959, 650), cv::Scalar(0,255,0), 2);
 
     // Anzeigen
     cv::imshow("Original mit Bounding-Boxen", img);
@@ -238,9 +248,21 @@ void timerCallback(const ros::TimerEvent&)
 {
     // Erstelle cmd_vel
     geometry_msgs::Twist cmd_vel;
-    cmd_vel.linear.x  = LINEAR_SPEED; 
-    cmd_vel.angular.z = omega;  
-    ROS_WARN("Omega: %f", omega);     
+
+    ROS_INFO("obstacleDetected: %s", obstacleDetected ? "true" : "false");
+
+    if (obstacleDetected)
+    {
+        cmd_vel.linear.x = 0.0;
+        cmd_vel.angular.z = 0.0;
+        ROS_WARN("Hindernis erkannt - Roboter stoppt!");
+    }
+    else
+    {
+        cmd_vel.linear.x  = LINEAR_SPEED; 
+        cmd_vel.angular.z = omega;  
+        ROS_WARN("Omega: %f", omega);     
+    }
 
     // Publish
     cmd_vel_pub.publish(cmd_vel);
@@ -254,6 +276,8 @@ int main(int argc, char** argv)
 
     // Kamera-Topic abonnieren
     image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/birdseye_image", 1, imageCallback);
+
+    ros::Subscriber obstacle_sub = nh.subscribe("robotik_projekt/flags/obstacle_flag", 1, obstacleFlagCallback);
 
     // Publisher für Bewegungsbefehle
     cmd_vel_pub = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 1);

@@ -5,6 +5,7 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/imgproc.hpp"
 #include "sensor_msgs/LaserScan.h"
+#include "std_msgs/Bool.h"
 //#include "sensor_msgs/PointCloud.h"
 //#include "laser_geometry/laser_geometry.h"
 //#include "pcl/point_cloud.h"
@@ -32,6 +33,10 @@ cv::Mat homographyMatrix = (cv::Mat_<double>(3, 3) <<
 // Globale Variablen für Publisher und Daten
 image_transport::Publisher birdseye_lidar_pub;
 
+ros::Publisher obstacle_pub;
+bool obstacleDetected = false;
+const float safetyDistance = 0.30;
+
 // Globaler Vektor mit Kamerabildpunkten
 std::vector<cv::Point2f>lidar_coordinates_camera;
 
@@ -39,6 +44,8 @@ std::vector<cv::Point2f>lidar_coordinates_camera;
 /// Callback-Funktion zur Verarbeitung der Punktwolke
 void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 {
+    obstacleDetected = false;
+
     std::vector<cv::Point2f> lidar_points;
 	cv::Mat transformedPoint;
 	// Schleife durch alle Messwerte im Scan
@@ -49,6 +56,11 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 		float angle = scan_msg->angle_min + i * scan_msg->angle_increment;
 		float range = scan_msg->ranges[i];
 				    	
+        // Überprüfe, ob der Messwert gültig ist
+        if (!std::isfinite(range) || range < scan_msg->range_min)
+            continue;
+
+
         // Abstand Kamera nach oben zu lidar = 7cm
         // Abstand Kamera nach hinten zu lidar = 7.5cm
         cv::Mat T = (cv::Mat_<double>(4,4) << 
@@ -60,6 +72,11 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         // Berechne die kartesischen Koordinaten
         if ((angle > 0 && angle < 0.78539816339 || angle >= 5.49778714378 && angle <= 6.28318530718) && range < 0.65 )
         { 
+            if (range < safetyDistance)
+            {
+                obstacleDetected = true;
+            }
+
             double x = range * cos(angle);
             double y = range * sin(angle);
             
@@ -81,7 +98,13 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         }
     }
 
-    lidar_coordinates_camera = lidar_points;	
+    lidar_coordinates_camera = lidar_points;
+
+    // Publiziere den booleschen Flag
+    std_msgs::Bool flag_msg;
+    flag_msg.data = obstacleDetected;
+    ROS_INFO("obstacleDetected: %s", obstacleDetected ? "true" : "false");
+    obstacle_pub.publish(flag_msg);	
 	
 	return;
 
@@ -138,6 +161,7 @@ int main(int argc, char** argv)
     image_transport::ImageTransport it(nh);
     image_transport::Subscriber birdseye_image_sub = it.subscribe("robotik_projekt/images/birdseye_image", 1, lidarBirdEyeCallback);
     birdseye_lidar_pub = it.advertise("robotik_projekt/images/birdseye_with_lidar_image", 1);
+    obstacle_pub = nh.advertise<std_msgs::Bool>("robotik_projekt/flags/obstacle_flag", 1);
 
     ros::spin();
     return 0;
