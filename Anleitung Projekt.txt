@@ -1,6 +1,62 @@
 Anleitung Projekt
 
 
+Noch toDo:
+
+
+- nach 360 Grad drehung am Ende ohne Erkennung von Linien höhrt er auf zu fahren. Mit neuem Errorstate: ich finde nichts
+
+- Koffer Mülleimer besser umfahren
+
+- evtl in beide Richtungen zu umfahren.
+
+- evtl. nur HSV raum verwenden.
+
+- Code aufräumen
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 Wenn später noch zeit ist, die launch datei schreiben, mit der sich die anderen launches öffnen
 
 

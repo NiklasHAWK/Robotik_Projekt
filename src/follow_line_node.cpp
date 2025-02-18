@@ -39,11 +39,11 @@ bool follow_state = false;
 //   ZUSTANDS-MASCHINE
 // -----------------------------------------
 enum RobotState {
+    SEARCH,
     FOLLOW_LINE,
     WAIT_CHECK,
     TURN_90_RIGHT,
     AVOID_OBSTACLE,
-    WAIT_AFTER_TURN
 };
 
 static RobotState current_state = FOLLOW_LINE;
@@ -55,7 +55,7 @@ static ros::Time wait_start_time;
 static ros::Time turn90_start_time;
 
 // Timestamp, wenn FOLLOW_LINE startet
-ros::Time wait_after_turn_start;
+static ros::Time search_start_time;
 
 
 // -----------------------------------------
@@ -98,29 +98,6 @@ std::pair<cv::Rect, cv::Rect> findLeftAndRightContours(const std::vector<cv::Rec
         }
     }
     return std::make_pair(leftRect, rightRect);
-}
-
-
-
-
-
-// -------------------------------------------------------------
-// Pure-Pursuit-Funktion: Berechne Winkelgeschwindigkeit
-// -------------------------------------------------------------
-double purePursuitOmega(double xL, double yL, double v)
-{
-    // L = Abstand zum Lookahead-Punkt
-    double L = std::sqrt(xL*xL + yL*yL);
-    // Falls L sehr klein oder Null, vermeiden wir Div/0
-    if (L < 1e-6) return 0.0;
-
-    // Krümmung kappa = 2 * yL / L^2
-    double kappa = 2.0 * yL / (L * L);
-
-    // Winkelgeschwindigkeit w = v * kappa
-    double gain  = 2.5; // Verstärkungsfaktor
-    double w = gain * v * kappa;
-    return w;
 }
 
 
@@ -258,6 +235,14 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         // Nur eine Kontur => verwende deren Mittelpunkt
         cv::Rect singleBox = boundingBoxes[0];
         middle_x = singleBox.x + singleBox.width / 2;
+        if(middle_x > 480)
+        {
+            middle_x = middle_x * 1.3;
+        }
+        else
+        {
+            middle_x = middle_x * 0.7;
+        }
         anyContourFound = true;
     }
     else
@@ -269,6 +254,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 
     //ROS_INFO("line_visible: %s", line_visible ? "true" : "false");
 
+//////////////////////////////////////////////////////////////////////////////////////
     // 9) Tiefpass-Filter für sanfte Steuerung
     middle_x = 0.2 * last_middle_x + 0.8 * middle_x;
     last_middle_x = middle_x;
@@ -289,18 +275,8 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     {
         // 10.1) Pixel-Offset vom Bildzentrum in x-Richtung
         int offset_px = middle_x - img_center;
-        double error = static_cast<double>(offset_px); // Fehler in Pixeln
 
-        // 10.2) Skaliere Pixel in Meter (y-Achse im Roboter-KS)
-        //       Annahme: y nach links/rechts, x vorwärts
-        double yL = -offset_px * PIXEL_TO_METER;
-
-        // 10.3) xL = konstanter Lookahead in m (z.B. 0.30 m vor dem Roboter)
-        double xL = LOOKAHEAD_X + PIXEL_TO_METER * 650;
-
-
-        // Berechne den reinen P-Anteil (Pure-Pursuit)
-        double w_p = purePursuitOmega(xL, yL, LINEAR_SPEED);
+        double error = -offset_px * PIXEL_TO_METER;
 
         // ---- Neuer D-Anteil ----
         // Statische Variablen speichern den vorherigen Fehler und Zeitpunkt
@@ -314,15 +290,16 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             d_error = (error - prev_error_follow) / dt;
         }
         // Wähle einen D-Verstärkungsfaktor (Kd) – diesen Wert musst du experimentell anpassen
-        double Kd_follow = 0.0003;
-        double w_d = Kd_follow * d_error;
-        // Summe aus P- und D-Anteil
-        double w_total = w_p + w_d;
+        double Kp = 0.8;
+        double Kd = 1.2;
+        double control = Kp * error + Kd * d_error;
 
-        // Begrenzen der Gesamt-Winkelgeschwindigkeit
-        if (w_total > MAX_OMEGA) w_total = MAX_OMEGA;
-        if (w_total < MIN_OMEGA) w_total = MIN_OMEGA;
-        omega = w_total;
+        // Begrenze den Reglerausgang
+        if (control > MAX_OMEGA)
+            control = MAX_OMEGA;
+        if (control < MIN_OMEGA)
+            control = MIN_OMEGA;
+        omega = control;
 
         // Aktualisiere die statischen Variablen für den nächsten Aufruf
         prev_error_follow = error;
@@ -345,8 +322,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         cv::line(img, cv::Point(rx, 0), cv::Point(rx, img.rows), cv::Scalar(255,0,0), 2);
     }
     cv::line(img, cv::Point(middle_x, 0), cv::Point(middle_x, img.rows), cv::Scalar(0,255,0), 2);
-    cv::line(img, cv::Point(0, 650), cv::Point(959, 650), cv::Scalar(0,255,0), 2);
-
+    
     // Anzeigen
     cv::imshow("Original mit Bounding-Boxen", img);
     // 1) morphOtsu, 2) morphHSV, 3) combined
@@ -395,6 +371,46 @@ void timerCallback(const ros::TimerEvent&)
 
     switch (current_state)
     {
+        case SEARCH:
+        {
+            // Statische Variablen, um den akkumulierten Drehwinkel und den letzten Zeitstempel zu speichern
+            static double accumulated_angle = 0.0;
+            static ros::Time last_search_time = ros::Time::now();
+            ros::Time current_time = ros::Time::now();
+            double dt = (current_time - last_search_time).toSec();
+            last_search_time = current_time;
+            
+            // Falls während der Suche eine Linie erkannt wird, sofort in FOLLOW_LINE wechseln.
+            if (line_visible)
+            {
+                ROS_INFO("Linie gefunden -> FOLLOW_LINE");
+                current_state = FOLLOW_LINE;
+                // Reset des akkumulierten Winkels für zukünftige Suchen
+                accumulated_angle = 0.0;
+                break;
+            }
+            
+            // Falls noch nicht 360° gedreht wurde, rotiere weiter
+            if (accumulated_angle < 2 * M_PI)
+            {
+                cmd_vel.linear.x = 0.0;
+                cmd_vel.angular.z = 0.3;  // langsame konstante Drehgeschwindigkeit
+                // Akkumulieren des gedrehten Winkels (Betrag!)
+                accumulated_angle += fabs(cmd_vel.angular.z * dt);
+                ROS_INFO("SEARCH: Drehwinkel = %f rad", accumulated_angle);
+            }
+            else
+            {
+                // Hat er 360° erreicht, dann stoppe und warte.
+                cmd_vel.linear.x = 0.0;
+                cmd_vel.angular.z = 0.0;
+                ROS_INFO("360° gedreht, warte auf Linie...");
+                // Der Zustand bleibt SEARCH, sodass wenn sich später line_visible ändert, 
+                // der Übergang zu FOLLOW_LINE erfolgt.
+            }
+            break;
+        }
+
         case FOLLOW_LINE:
         {
             follow_state = true;
@@ -417,9 +433,8 @@ void timerCallback(const ros::TimerEvent&)
                 }
                 else
                 {
-                    // Linie nicht sichtbar => z. B. leichte Suche
-                    cmd_vel.linear.x  = 0.0;
-                    cmd_vel.angular.z = 0.2;
+                    ROS_INFO("Linie verloren -> SEARCH");
+                    current_state = SEARCH;
                 }
             }
             break;
@@ -484,41 +499,11 @@ void timerCallback(const ros::TimerEvent&)
             if (line_visible && distance_360 > OBSTACLE_DISTANCE_THRESHOLD)
             {
                 // Linie gefunden => z. B. kurze Rechtsdrehung oder direkt rein
-                ROS_INFO("Linie wieder da -> WAIT_AFTER_TURN");
-                current_state = WAIT_AFTER_TURN;
-                wait_after_turn_start = ros::Time::now();
+                ROS_INFO("Linie wieder da -> FOLLOW_LINE");
+                current_state = FOLLOW_LINE;
             }
             else
             {
-                /*
-                // Hindernis-Umfahrung
-                // if distance_360 < 0.3 => zu nah => weiter rechts drehen / evtl. bremsen
-                if (distance_360 < OBSTACLE_DISTANCE_THRESHOLD)
-                {
-                    
-                    // z. B. Stop + drehen
-                    cmd_vel.linear.x  = 0.01;
-                    cmd_vel.angular.z = -0.4;
-                }
-                else
-                {
-                    // Abstand >= 30cm => leicht vorwärts, 
-                    // und je nachdem leichte Linksdrehung, damit wir "rund" ums Hindernis kommen
-                    cmd_vel.linear.x  = 0.04;    // langsames Vorwärts
-                    cmd_vel.angular.z = 0.2;     // z. B. Linksdrehung
-                   
-
-                   
-                }
-                 */
-                /*
-
-                double distance = distance_360 - (OBSTACLE_DISTANCE_THRESHOLD - 0.1);
-                cmd_vel.linear.x  = 0.05;
-                cmd_vel.angular.z = 2 * distance;
-
-                */
-
                 // Berechne den Fehler (Abweichung vom gewünschten Abstand)
                 double error = distance_360 - (OBSTACLE_DISTANCE_THRESHOLD - 0.1);
 
@@ -536,8 +521,8 @@ void timerCallback(const ros::TimerEvent&)
                 }
 
                 // Regler-Gewichte (Kp und Kd) können je nach gewünschtem Verhalten angepasst werden
-                double Kp = 2.0;  // Proportionalanteil
-                double Kd = 0.5;  // Differentialanteil
+                double Kp = 0.8;  // Proportionalanteil
+                double Kd = 1.2;  // Differentialanteil
 
                 double control = Kp * error + Kd * d_error;
 
@@ -548,20 +533,6 @@ void timerCallback(const ros::TimerEvent&)
                 // Aktualisiere die statischen Variablen für die nächste Iteration
                 prev_error = error;
                 prev_time  = current_time;
-            }
-            break;
-        }
-
-        case WAIT_AFTER_TURN:
-        {
-            // Weiterhin den Befehl veröffentlichen
-            cmd_vel.linear.x  = 0.05;
-            cmd_vel.angular.z = -0.2;
-            // Prüfen, ob 1 Sekunde vergangen ist
-            if (ros::Time::now() - wait_after_turn_start >= ros::Duration(2.0))
-            {
-                current_state = FOLLOW_LINE; // Jetzt in den normalen Follow-Line-Modus wechseln
-                ROS_INFO("1 Sekunde gewartet, Wechsel zu FOLLOW_LINE");
             }
             break;
         }
