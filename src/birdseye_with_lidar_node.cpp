@@ -5,7 +5,7 @@
 #include "opencv2/opencv.hpp"
 #include "opencv2/imgproc.hpp"
 #include "sensor_msgs/LaserScan.h"
-#include "std_msgs/Bool.h"
+#include "std_msgs/Float32.h"
 //#include "sensor_msgs/PointCloud.h"
 //#include "laser_geometry/laser_geometry.h"
 //#include "pcl/point_cloud.h"
@@ -30,12 +30,12 @@ cv::Mat homographyMatrix = (cv::Mat_<double>(3, 3) <<
  1.622492288698972e-05, -0.003072405300756105, 1);
 
 
-// Globale Variablen für Publisher und Daten
+// Publisher für das birdseye_with_lidar-Bild
 image_transport::Publisher birdseye_lidar_pub;
 
-ros::Publisher obstacle_pub;
-bool obstacleDetected = false;
-const float safetyDistance = 0.30;
+// Publisher für "Front"-Abstand und "360°"-Abstand
+ros::Publisher obstacle_distance_front_pub;
+ros::Publisher obstacle_distance_360_pub;
 
 // Globaler Vektor mit Kamerabildpunkten
 std::vector<cv::Point2f>lidar_coordinates_camera;
@@ -44,14 +44,22 @@ std::vector<cv::Point2f>lidar_coordinates_camera;
 /// Callback-Funktion zur Verarbeitung der Punktwolke
 void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 {
-    obstacleDetected = false;
-
     std::vector<cv::Point2f> lidar_points;
-	cv::Mat transformedPoint;
+
+    float min_distance_front = std::numeric_limits<float>::infinity();
+    float min_distance_360   = std::numeric_limits<float>::infinity();
+
+    // Abstand Kamera nach oben zu lidar = 7cm
+    // Abstand Kamera nach hinten zu lidar = 7.5cm
+    cv::Mat T = (cv::Mat_<double>(4,4) << 
+    0.0, -1.0,  0.0,   0.0,
+    0.0,  0.0, -1.0,  -0.056,
+    1.0,  0.0,  0.0,  -0.075,
+    0.0,  0.0,  0.0,   1.0); 
+
 	// Schleife durch alle Messwerte im Scan
 	for (uint16_t i = 0; i < scan_msg->ranges.size(); i++)
 	{
-		
 		// Berechne den Winkel für jedes Range-Element
 		float angle = scan_msg->angle_min + i * scan_msg->angle_increment;
 		float range = scan_msg->ranges[i];
@@ -60,21 +68,20 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         if (!std::isfinite(range) || range < scan_msg->range_min)
             continue;
 
-
-        // Abstand Kamera nach oben zu lidar = 7cm
-        // Abstand Kamera nach hinten zu lidar = 7.5cm
-        cv::Mat T = (cv::Mat_<double>(4,4) << 
-        0.0, -1.0,  0.0,   0.0,
-        0.0,  0.0, -1.0,  -0.056,
-        1.0,  0.0,  0.0,  -0.075,
-        0.0,  0.0,  0.0,   1.0); 
+        // 1) Minimalen 360°-Abstand aktualisieren
+        if (range < min_distance_360) 
+        {
+            min_distance_360 = range;
+        }
+        
 
         // Berechne die kartesischen Koordinaten
-        if ((angle > 0 && angle < 0.78539816339 || angle >= 5.49778714378 && angle <= 6.28318530718) && range < 0.65 )
+        if ((angle > 0.0 && angle < 0.78539816339 || angle >= 5.49778714378 && angle <= 6.28318530718) && range < 0.65 )
         { 
-            if (range < safetyDistance)
+            // minDistanceFront
+            if (range < min_distance_front) 
             {
-                obstacleDetected = true;
+                min_distance_front = range;
             }
 
             double x = range * cos(angle);
@@ -88,7 +95,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
             cv::Mat pointMat = T * pointMat4D;
             cv::Mat pointMat3D = (cv::Mat_<double>(3, 1) << pointMat.at<double>(0,0), pointMat.at<double>(1,0), pointMat.at<double>(2,0));
 
-            transformedPoint = cameraMatrix * pointMat3D;
+            cv::Mat transformedPoint = cameraMatrix * pointMat3D;
             cv::Point2f single_point((transformedPoint.at<double>(0, 0)/transformedPoint.at<double>(2, 0)),(transformedPoint.at<double>(1, 0)/transformedPoint.at<double>(2,0)));
             // Transformationsmatrix
             if (single_point.x >= 0 && single_point.x < 720 && single_point.y > 0 && single_point.y < 960)
@@ -100,11 +107,33 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 
     lidar_coordinates_camera = lidar_points;
 
-    // Publiziere den booleschen Flag
-    std_msgs::Bool flag_msg;
-    flag_msg.data = obstacleDetected;
-    ROS_INFO("obstacleDetected: %s", obstacleDetected ? "true" : "false");
-    obstacle_pub.publish(flag_msg);	
+    // Publiziere den minimalen Front-Abstand
+    std_msgs::Float32 msg_front;
+    if (min_distance_front == std::numeric_limits<float>::infinity())
+    {
+        msg_front.data = -1.0;  // z. B. -1 => kein Hindernis in FRONT
+    }
+    else
+    {
+        msg_front.data = min_distance_front;
+    }
+
+    obstacle_distance_front_pub.publish(msg_front);
+    ROS_INFO("obstacle_distance_front: %f", msg_front.data);
+
+    // Publiziere den minimalen 360°-Abstand
+    std_msgs::Float32 msg_360;
+    if (min_distance_360 == std::numeric_limits<float>::infinity())
+    {
+        msg_360.data = -1.0;  // kein Hindernis in 360°, sollte praktisch nie passieren
+    }
+    else
+    {
+        msg_360.data = min_distance_360;
+    }
+
+    obstacle_distance_360_pub.publish(msg_360);
+    ROS_INFO("obstacle_distance_360: %f", msg_360.data);
 	
 	return;
 
@@ -142,9 +171,6 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
     sensor_msgs::ImagePtr output_msg = cv_bridge::CvImage(img_msg->header, "bgr8", cv_ptr->image).toImageMsg();
     	
     birdseye_lidar_pub.publish(output_msg); 
-    	
-	
-	
 	
 	cv::imshow("test", cv_ptr->image);
 	cv::waitKey(1);
@@ -156,12 +182,19 @@ int main(int argc, char** argv)
     ros::init(argc, argv, "birdseye_with_lidar_node");
     ros::NodeHandle nh;
 
-    // Subscriber für LaserScan und Bird's Eye View Bild
-    ros::Subscriber lidar_sub = nh.subscribe("/scan", 1, scanCallback);
+    // ImageTransport
     image_transport::ImageTransport it(nh);
+
+    // Subscriber (LaserScan + Bird-Eye-Bild)
+    ros::Subscriber lidar_sub = nh.subscribe("/scan", 1, scanCallback);
     image_transport::Subscriber birdseye_image_sub = it.subscribe("robotik_projekt/images/birdseye_image", 1, lidarBirdEyeCallback);
+
+     // Publisher: Visualisiertes Bild
     birdseye_lidar_pub = it.advertise("robotik_projekt/images/birdseye_with_lidar_image", 1);
-    obstacle_pub = nh.advertise<std_msgs::Bool>("robotik_projekt/flags/obstacle_flag", 1);
+
+    // Publisher: 2 Abstände
+    obstacle_distance_front_pub = nh.advertise<std_msgs::Float32>("robotik_projekt/obstacle/distance_front", 1);
+    obstacle_distance_360_pub   = nh.advertise<std_msgs::Float32>("robotik_projekt/obstacle/distance_360", 1);
 
     ros::spin();
     return 0;
