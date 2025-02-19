@@ -37,6 +37,9 @@ image_transport::Publisher birdseye_lidar_pub;
 ros::Publisher obstacle_distance_front_pub;
 ros::Publisher obstacle_distance_360_pub;
 
+// Globaler Publisher für die Richtungsinformation (links/rechts)
+ros::Publisher obstacle_direction_pub;
+
 // Globaler Vektor mit Kamerabildpunkten
 std::vector<cv::Point2f>lidar_coordinates_camera;
 
@@ -48,6 +51,8 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 
     float min_distance_front = std::numeric_limits<float>::infinity();
     float min_distance_360   = std::numeric_limits<float>::infinity();
+    float min_distance_left = std::numeric_limits<float>::infinity();
+    float min_distance_right   = std::numeric_limits<float>::infinity();
 
     // Abstand Kamera nach oben zu lidar = 7cm
     // Abstand Kamera nach hinten zu lidar = 7.5cm
@@ -76,7 +81,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         
 
         // Berechne die kartesischen Koordinaten
-        if ((angle > 0.0 && angle < 0.78539816339 || angle >= 5.49778714378 && angle <= 6.28318530718) && range < 0.65 )
+        if ((angle > 0.0 && angle < (M_PI / 4) || angle >= (7 * M_PI / 4) && angle <= (2 * M_PI)) && range < 0.65 )
         { 
             // minDistanceFront
             if (range < min_distance_front) 
@@ -103,6 +108,21 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
                 lidar_points.push_back(single_point);
             }
         }
+        else if (angle > (1* M_PI / 4) && angle < (3 * M_PI / 4))
+        {
+            if (range < min_distance_left) 
+            {
+                min_distance_left = range;
+            }
+        }
+        else if (angle > (5 * M_PI / 4) && angle < (7 * M_PI / 4))
+        {
+            if (range < min_distance_right) 
+            {
+                min_distance_right = range;
+            }
+        }
+        
     }
 
     lidar_coordinates_camera = lidar_points;
@@ -119,7 +139,7 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     }
 
     obstacle_distance_front_pub.publish(msg_front);
-    ROS_INFO("obstacle_distance_front: %f", msg_front.data);
+    //ROS_INFO("obstacle_distance_front: %f", msg_front.data);
 
     // Publiziere den minimalen 360°-Abstand
     std_msgs::Float32 msg_360;
@@ -133,7 +153,20 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     }
 
     obstacle_distance_360_pub.publish(msg_360);
-    ROS_INFO("obstacle_distance_360: %f", msg_360.data);
+    //ROS_INFO("obstacle_distance_360: %f", msg_360.data);
+
+    // Publiziere die Richtung
+    std_msgs::Float32 msg_direction;
+    if (min_distance_right < min_distance_left)
+    {
+        msg_direction.data = 1.0;  // Richtung links
+    }
+    else
+    {
+        msg_direction.data = -1.0; // Richtung rechts
+    }
+
+    obstacle_direction_pub.publish(msg_direction);
 	
 	return;
 
@@ -172,8 +205,8 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
     	
     birdseye_lidar_pub.publish(output_msg); 
 	
-	cv::imshow("test", cv_ptr->image);
-	cv::waitKey(1);
+	//cv::imshow("birdseye_lidar_pub", cv_ptr->image);
+	//cv::waitKey(1);
 	return;
 }
 
@@ -181,6 +214,8 @@ int main(int argc, char** argv)
 {
     ros::init(argc, argv, "birdseye_with_lidar_node");
     ros::NodeHandle nh;
+
+    ROS_INFO("birdseye_with_lidar_node gestartet.");
 
     // ImageTransport
     image_transport::ImageTransport it(nh);
@@ -195,6 +230,9 @@ int main(int argc, char** argv)
     // Publisher: 2 Abstände
     obstacle_distance_front_pub = nh.advertise<std_msgs::Float32>("robotik_projekt/obstacle/distance_front", 1);
     obstacle_distance_360_pub   = nh.advertise<std_msgs::Float32>("robotik_projekt/obstacle/distance_360", 1);
+
+     // Erstelle den Publisher für die Richtungsinformation:
+     obstacle_direction_pub = nh.advertise<std_msgs::Float32>("robotik_projekt/obstacle/direction", 1);
 
     ros::spin();
     return 0;

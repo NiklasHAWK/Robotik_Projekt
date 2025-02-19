@@ -1,0 +1,13 @@
+<launch>
+  <!-- Startet den rectified_image_node -->
+  <node pkg="robotik_projekt_ws24_nvs_js" type="rectified_image_node" name="rectified_image_node" output="screen" />
+  
+  <!-- Startet den birdseye_node -->
+  <node pkg="robotik_projekt_ws24_nvs_js" type="birdseye_node" name="birdseye_node" output="screen" />
+  
+  <!-- Startet den birdseye_with_lidar_node -->
+  <node pkg="robotik_projekt_ws24_nvs_js" type="birdseye_with_lidar_node" name="birdseye_with_lidar_node" output="screen" />
+  
+  <!-- Startet den follow_line_node -->
+  <!-- <node pkg="robotik_projekt_ws24_nvs_js" type="follow_line_node" name="follow_line_node" output="screen" /> -->
+</launch>

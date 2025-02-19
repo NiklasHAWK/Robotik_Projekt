@@ -153,7 +153,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 
         sensor_msgs::ImagePtr output_msg = cv_bridge::CvImage(msg->header, "bgr8", birds_image).toImageMsg();
         pub.publish(output_msg);
-	    ROS_INFO("birdseye_image gepublished.");
+	    //ROS_INFO("birdseye_image gepublished.");
 
         
     } 

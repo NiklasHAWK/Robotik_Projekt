@@ -4,9 +4,9 @@ Anleitung Projekt
 Noch toDo:
 
 
-- nach 360 Grad drehung am Ende ohne Erkennung von Linien höhrt er auf zu fahren. Mit neuem Errorstate: ich finde nichts
+check: nach 360 Grad drehung am Ende ohne Erkennung von Linien höhrt er auf zu fahren. Mit neuem Errorstate: ich finde nichts
 
-- Koffer Mülleimer besser umfahren
+- Koffer/Mülleimer besser umfahren
 
 - evtl in beide Richtungen zu umfahren.
 

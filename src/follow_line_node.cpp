@@ -7,8 +7,14 @@
 #include <opencv2/imgproc/imgproc.hpp>
 #include <opencv2/highgui/highgui.hpp>
 #include "std_msgs/Float32.h"
+#include "nav_msgs/Odometry.h"
+#include "tf/tf.h"
 #include <cmath>
 
+
+
+
+ros::Time letzte_zeit;
 
 
 
@@ -34,6 +40,14 @@ static const double TURN_90_DURATION = 1.57;
 bool follow_state = false;
 
 
+// Globale Variablen für die Odometry-basierte Drehung im SEARCH-Zustand
+double accumulated_yaw = 0.0;
+
+// Richtung Hindernisumfahren
+float obstacle_direction = -1.0; // Standard: rechts
+
+
+
 
 // -----------------------------------------
 //   ZUSTANDS-MASCHINE
@@ -42,7 +56,7 @@ enum RobotState {
     SEARCH,
     FOLLOW_LINE,
     WAIT_CHECK,
-    TURN_90_RIGHT,
+    TURN_90,
     AVOID_OBSTACLE,
 };
 
@@ -51,7 +65,7 @@ static RobotState current_state = FOLLOW_LINE;
 // Timestamp, wenn WAIT_CHECK startet
 static ros::Time wait_start_time;
 
-// Timestamp, wenn TURN_90_RIGHT startet
+// Timestamp, wenn TURN_90 startet
 static ros::Time turn90_start_time;
 
 // Timestamp, wenn FOLLOW_LINE startet
@@ -120,6 +134,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     }
     cv::Mat img = cv_ptr->image;
 
+    /*
     // 2) In Graustufen konvertieren
     cv::Mat gray;
     cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
@@ -138,7 +153,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     cv::morphologyEx(binary, morphOtsu, cv::MORPH_OPEN, kernel_morph);
     cv::morphologyEx(morphOtsu, morphOtsu, cv::MORPH_CLOSE, kernel_morph);
 
-
+    */
 
 
     // =============== NEU: HSV-Teil für Gelb-Erkennung ===============
@@ -147,8 +162,8 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
 
     // b) Schwellenwerte für Gelb definieren (mögliche Feinjustierung nötig)
-    cv::Scalar lowerY(20, 0, 0);   // untere Grenze Gelb (H=20°, S=80, V=80)
-    cv::Scalar upperY(60, 255, 255); // obere Grenze Gelb (H=30°, S=255, V=255)
+    cv::Scalar lowerY(20, 100, 50);   // untere Grenze Gelb (H=20°, S=80, V=80)
+    cv::Scalar upperY(60, 255, 200); // obere Grenze Gelb (H=30°, S=255, V=255)
     cv::Mat maskYellow;
     cv::inRange(hsv, lowerY, upperY, maskYellow);
 
@@ -191,15 +206,15 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     morphHSV.setTo(0, hsvMask);
 
     // =============== Kombinieren: nur wo Otsu UND Gelb erkannt wird ===============
-    cv::Mat masksCombined;
-    cv::bitwise_and(morphOtsu, morphHSV, masksCombined);
+    //cv::Mat masksCombined;
+    //cv::bitwise_and(morphOtsu, morphHSV, masksCombined);
     // => In "combined" ist nur noch weiß, wo BEIDE Masken übereinstimmen
 
     // ----------------------------------------------------------------------
     // 6) Konturensuche (nach dem Übermalen)
     // ----------------------------------------------------------------------
     std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(masksCombined, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    cv::findContours(morphHSV, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
     // 7) Bounding Boxes ermitteln und filtern (nach Fläche)
     std::vector<cv::Rect> boundingBoxes;
@@ -327,10 +342,20 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     cv::imshow("Original mit Bounding-Boxen", img);
     // 1) morphOtsu, 2) morphHSV, 3) combined
     //cv::imshow("OTSU morph", morphOtsu);
-    //cv::imshow("HSV morph", morphHSV);
-    cv::imshow("Combined OTSU+HSV", masksCombined);
+    cv::imshow("HSV morph", morphHSV);
+    //cv::imshow("Combined OTSU+HSV", masksCombined);
     cv::waitKey(1);
-    ROS_INFO("Omega: %f", omega);
+    //ROS_INFO("Omega: %f", omega);
+
+
+
+    ros::Time zeit = ros::Time::now();
+    ros::Duration elapsed_time = zeit - letzte_zeit;
+    letzte_zeit = zeit;
+    double fps = 1 / elapsed_time.toSec();
+    ROS_INFO_STREAM("Verstrichene Zeit: " << elapsed_time.toSec() << " Sekunden");
+    ROS_INFO("fps: %f", fps);
+
 }
 
 void distanceFrontCallback(const std_msgs::Float32::ConstPtr& msg)
@@ -356,6 +381,49 @@ void distance360Callback(const std_msgs::Float32::ConstPtr& msg)
     }
 }
 
+void directionCallback(const std_msgs::Float32::ConstPtr& msg)
+{
+    obstacle_direction = msg->data;
+    ROS_INFO("Empfangene Richtungsinfo: %f", obstacle_direction);
+}
+
+void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
+{
+    // Extrahiere den Yaw aus der Quaternion
+    tf::Quaternion q(
+        msg->pose.pose.orientation.x,
+        msg->pose.pose.orientation.y,
+        msg->pose.pose.orientation.z,
+        msg->pose.pose.orientation.w);
+    tf::Matrix3x3 m(q);
+    double roll, pitch, yaw;
+    m.getRPY(roll, pitch, yaw);
+
+    // Statische Variablen zur Akkumulation
+    static bool first_odom = true;
+    static double prev_yaw = 0.0;
+    
+    if (first_odom)
+    {
+        prev_yaw = yaw;
+        first_odom = false;
+        // Setze accumulated_yaw auf 0 (falls nötig)
+        accumulated_yaw = 0.0;
+    }
+    else
+    {
+        // Berechne die Änderung zwischen dem aktuellen und dem vorherigen Yaw
+        double delta = yaw - prev_yaw;
+        // Normalisiere den Winkel, damit er im Bereich [-π, π] liegt
+        if (delta > M_PI)
+            delta -= 2 * M_PI;
+        else if (delta < -M_PI)
+            delta += 2 * M_PI;
+        // Akkumuliere den absoluten Drehbetrag
+        accumulated_yaw += fabs(delta);
+        prev_yaw = yaw;
+    }
+}
 
 
 
@@ -373,40 +441,31 @@ void timerCallback(const ros::TimerEvent&)
     {
         case SEARCH:
         {
-            // Statische Variablen, um den akkumulierten Drehwinkel und den letzten Zeitstempel zu speichern
-            static double accumulated_angle = 0.0;
-            static ros::Time last_search_time = ros::Time::now();
-            ros::Time current_time = ros::Time::now();
-            double dt = (current_time - last_search_time).toSec();
-            last_search_time = current_time;
             
-            // Falls während der Suche eine Linie erkannt wird, sofort in FOLLOW_LINE wechseln.
+            // Wenn während der Suche eine Linie erkannt wird, direkt in FOLLOW_LINE wechseln.
             if (line_visible)
             {
                 ROS_INFO("Linie gefunden -> FOLLOW_LINE");
                 current_state = FOLLOW_LINE;
-                // Reset des akkumulierten Winkels für zukünftige Suchen
-                accumulated_angle = 0.0;
+                // Reset der Odometry-Drehvariablen
+                accumulated_yaw = 0.0;
                 break;
             }
-            
-            // Falls noch nicht 360° gedreht wurde, rotiere weiter
-            if (accumulated_angle < 2 * M_PI)
+
+                
+            if (accumulated_yaw < 2 * M_PI) // Noch nicht 360° gedreht: Weiterdrehen
             {
                 cmd_vel.linear.x = 0.0;
-                cmd_vel.angular.z = 0.3;  // langsame konstante Drehgeschwindigkeit
-                // Akkumulieren des gedrehten Winkels (Betrag!)
-                accumulated_angle += fabs(cmd_vel.angular.z * dt);
-                ROS_INFO("SEARCH: Drehwinkel = %f rad", accumulated_angle);
+                cmd_vel.angular.z = 0.3;  // oder ein anderer langsamer Wert
+                ROS_INFO("SEARCH: Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
             }
-            else
+            else // Falls 360° erreicht sind:
             {
-                // Hat er 360° erreicht, dann stoppe und warte.
+                ROS_INFO("360 Grad gedreht, aber keine Linie gefunden. Warte...");
+                // Hier kannst du den Roboter anhalten oder weitere Maßnahmen ergreifen.
+                // Du könntest auch den Zustand SEARCH beibehalten, um auf spätere Linieneingänge zu reagieren.
                 cmd_vel.linear.x = 0.0;
                 cmd_vel.angular.z = 0.0;
-                ROS_INFO("360° gedreht, warte auf Linie...");
-                // Der Zustand bleibt SEARCH, sodass wenn sich später line_visible ändert, 
-                // der Übergang zu FOLLOW_LINE erfolgt.
             }
             break;
         }
@@ -452,12 +511,12 @@ void timerCallback(const ros::TimerEvent&)
             }
             else
             {
-                // Hindernis noch da => nach 5 s in TURN_90_RIGHT
+                // Hindernis noch da => nach 5 s in TURN_90
                 if (elapsed >= WAIT_DURATION)
                 {
-                    ROS_INFO("5s abgelaufen -> TURN_90_RIGHT");
-                    current_state = TURN_90_RIGHT;
-                    turn90_start_time = ros::Time::now();
+                    ROS_INFO("5s abgelaufen -> TURN_90");
+                    current_state = TURN_90;
+                    accumulated_yaw = 0.0;
                 }
             }
             // Stehen bleiben
@@ -466,23 +525,23 @@ void timerCallback(const ros::TimerEvent&)
             break;
         }
 
-        case TURN_90_RIGHT:
+        case TURN_90:
         {
             follow_state = false;
             // Drehe dich für TURN_90_DURATION um ~90° nach rechts
-            double turn_elapsed = now - turn90_start_time.toSec();
-
-            if (turn_elapsed < TURN_90_DURATION)
+            
+            if (fabs(accumulated_yaw) < M_PI / 2) // Noch nicht 90° gedreht: Weiterdrehen
             {
-                // Konstante Rechtsdrehung
-                cmd_vel.linear.x  = 0.0;
-                cmd_vel.angular.z = -1.0; 
+                // Konstante Drehung
+                cmd_vel.linear.x = 0.0;
+                cmd_vel.angular.z = 0.6 * obstacle_direction; // Links oder Rechts
             }
-            else
+            else // Wenn 90° erreicht sind:
             {
                 // Fertig => wechsle in AVOID_OBSTACLE
                 ROS_INFO("90° Drehung beendet -> AVOID_OBSTACLE");
                 current_state = AVOID_OBSTACLE;
+                accumulated_yaw = 0.0;
             }
             break;
         }
@@ -511,7 +570,6 @@ void timerCallback(const ros::TimerEvent&)
                 // Füge jetzt einen D-Anteil hinzu:
                 static double prev_error = 0.0;           // Vorheriger Fehler (statisch, damit er zwischen den Aufrufen erhalten bleibt)
                 static ros::Time prev_time = ros::Time::now();  // Vorheriger Zeitpunkt
-
                 ros::Time current_time = ros::Time::now();
                 double dt = (current_time - prev_time).toSec();
                 double d_error = 0.0;
@@ -525,10 +583,17 @@ void timerCallback(const ros::TimerEvent&)
                 double Kd = 1.2;  // Differentialanteil
 
                 double control = Kp * error + Kd * d_error;
-
-                // Setze den Befehl: Wir fahren konstant vorwärts (0.05 m/s) und regeln die Winkelgeschwindigkeit
-                cmd_vel.linear.x  = 0.05;
-                cmd_vel.angular.z = control;
+                double angular_command = -obstacle_direction * control;
+        
+                // Begrenze den Ausgang:
+                if (angular_command > MAX_OMEGA)
+                    angular_command = MAX_OMEGA;
+                if (angular_command < MIN_OMEGA)
+                    angular_command = MIN_OMEGA;
+                
+                cmd_vel.linear.x  = 0.05; // langsame Vorwärtsfahrt
+                cmd_vel.angular.z = angular_command;
+        
 
                 // Aktualisiere die statischen Variablen für die nächste Iteration
                 prev_error = error;
@@ -548,12 +613,16 @@ int main(int argc, char** argv)
     ros::NodeHandle nh;
     image_transport::ImageTransport it(nh);
 
+    // Erstelle den Odometry-Subscriber:
+    ros::Subscriber odom_sub = nh.subscribe("/odom", 1, odomCallback);
+
     // Subscriber für Kamera/Bird's-Eye
     image_transport::Subscriber img_sub = it.subscribe("robotik_projekt/images/birdseye_image", 1, imageCallback);
 
     // LiDAR-Abstände (Front / 360°)
     ros::Subscriber front_sub = nh.subscribe("robotik_projekt/obstacle/distance_front", 1, distanceFrontCallback);
     ros::Subscriber surround_sub = nh.subscribe("robotik_projekt/obstacle/distance_360", 1, distance360Callback);
+    ros::Subscriber dir_sub = nh.subscribe("robotik_projekt/obstacle/direction", 1, directionCallback);
 
     // Publisher für /cmd_vel
     cmd_vel_pub = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
