@@ -25,9 +25,9 @@ cv::Mat cameraMatrix = (cv::Mat_<double>(3, 3) <<
 
 // Homographie
 cv::Mat homographyMatrix = (cv::Mat_<double>(3, 3) << 
--0.6844031534226153, -1.450545517122974, 797.897835011137,
- 0.02678153217836598, -3.76790286931926, 1825.200883354766,
- 1.622492288698972e-05, -0.003072405300756105, 1);
+-0.7041802788118632, -1.449854024507943, 806.9806822887714,
+0.02678154125035459, -3.767904210723072, 1825.201492912745,
+1.622492389041975e-05, -0.003072405952626527, 1);
 
 
 // Publisher für das birdseye_with_lidar-Bild
@@ -58,9 +58,17 @@ void scanCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
     // Abstand Kamera nach hinten zu lidar = 7.5cm
     cv::Mat T = (cv::Mat_<double>(4,4) << 
     0.0, -1.0,  0.0,   0.0,
+    0.0,  0.0, -1.0,  -0.07,
+    1.0,  0.0,  0.0,  -0.075,
+    0.0,  0.0,  0.0,   1.0); 
+    
+    /*
+    0.0, -1.0,  0.0,   0.0,
     0.0,  0.0, -1.0,  -0.056,
     1.0,  0.0,  0.0,  -0.075,
     0.0,  0.0,  0.0,   1.0); 
+
+    */
 
 	// Schleife durch alle Messwerte im Scan
 	for (uint16_t i = 0; i < scan_msg->ranges.size(); i++)
@@ -179,6 +187,8 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
     cv_bridge::CvImagePtr cv_ptr;
     cv_ptr = cv_bridge::toCvCopy(img_msg, sensor_msgs::image_encodings::BGR8);
 
+    std::vector<cv::Point2f>lidar_coordinates_camera_test;
+
 
 	// cv::Mat aus lidar_coordinates_camera
 	// cv::Mat lidarbirdEyePoints;
@@ -191,12 +201,14 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
         cv::Mat transformed_point = homographyMatrix * point;
         
         // Ergebnis zurück in 2D (normale Koordinaten) umwandeln
-        lidar_coordinates_camera[i] = cv::Point2f(transformed_point.at<double>(0,0)/transformed_point.at<double>(2,0),
-                                                   transformed_point.at<double>(1,0)/transformed_point.at<double>(2,0));
+        //lidar_coordinates_camera[i] = cv::Point2f(transformed_point.at<double>(0,0)/transformed_point.at<double>(2,0), transformed_point.at<double>(1,0)/transformed_point.at<double>(2,0));
+
+        lidar_coordinates_camera_test.push_back(cv::Point2f(transformed_point.at<double>(0,0)/transformed_point.at<double>(2,0),
+        transformed_point.at<double>(1,0)/transformed_point.at<double>(2,0)));                                       
     }
 
 
-	for(const auto& lidar_point : lidar_coordinates_camera)
+	for(const auto& lidar_point : lidar_coordinates_camera_test)
     {
 		circle(cv_ptr->image, cv::Point2f(lidar_point.x, lidar_point.y), 2, cv::Scalar(0, 0, 255), -1);
 	}
@@ -205,8 +217,8 @@ void lidarBirdEyeCallback(const sensor_msgs::Image::ConstPtr& img_msg)
     	
     birdseye_lidar_pub.publish(output_msg); 
 	
-	//cv::imshow("birdseye_lidar_pub", cv_ptr->image);
-	//cv::waitKey(1);
+	cv::imshow("birdseye_lidar_pub", cv_ptr->image);
+	cv::waitKey(1);
 	return;
 }
 

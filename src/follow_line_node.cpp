@@ -22,29 +22,25 @@ ros::Time letzte_zeit;
 // -----------------------------------------
 //   GLOBALE PARAMETER
 // -----------------------------------------
-static const double PIXEL_TO_METER = 0.18 / 360.0; // Meter in der Breite / Pixel in der Breite
-static const double LOOKAHEAD_X    = 0.304;     // Lookahead in m nach vorn, ab wo das Sichtfeld beginnt
 static const double MIN_OMEGA      = -0.5;     // Begrenzung Winkelgeschwindigkeit
 static const double MAX_OMEGA      =  0.5;
 static const double LINEAR_SPEED   =  0.08;    // Konstante Vorwärtsgeschwindigkeit
 
 // 30 cm = 0.3 m
-static const double OBSTACLE_DISTANCE_THRESHOLD = 0.30;
+static const double OBSTACLE_DISTANCE_THRESHOLD_FRONT = 0.4;
+static const double OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE = 0.2;
 
 // 5 Sekunden Wartezeit
-static const double WAIT_DURATION = 5.0;
-
-// Zeit für 90°-Drehung (z. B. 1.57 s bei angular.z = -1.0)
-static const double TURN_90_DURATION = 1.57; 
+static const double WAIT_DURATION = 3.0;
 
 bool follow_state = false;
-
 
 // Globale Variablen für die Odometry-basierte Drehung im SEARCH-Zustand
 double accumulated_yaw = 0.0;
 
 // Richtung Hindernisumfahren
-float obstacle_direction = -1.0; // Standard: rechts
+float turn_direction = -1.0; // Standard: rechts
+float obsticle_direction = -1.0; // Standard: rechts
 
 
 
@@ -114,8 +110,24 @@ std::pair<cv::Rect, cv::Rect> findLeftAndRightContours(const std::vector<cv::Rec
     return std::make_pair(leftRect, rightRect);
 }
 
-
-
+double computeAngularVelocity(double Kp, double Kd, double error, double &prev_error, ros::Time current_time, ros::Time &prev_time)
+{
+    double dt = (current_time - prev_time).toSec();
+    double d_error = 0.0;
+    if (dt > 0.0)
+    {
+        d_error = (error - prev_error) / dt;
+    }
+    double control = Kp * error + Kd * d_error;
+    
+    if (control > MAX_OMEGA)
+        control = MAX_OMEGA;
+    if (control < MIN_OMEGA)
+        control = MIN_OMEGA;
+    
+        ROS_INFO("control: %f", control);
+    return control;
+}
 
 
 // -----------------------------------------
@@ -252,11 +264,11 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         middle_x = singleBox.x + singleBox.width / 2;
         if(middle_x > 480)
         {
-            middle_x = middle_x * 1.3;
+            middle_x = middle_x * 1.5;
         }
         else
         {
-            middle_x = middle_x * 0.7;
+            middle_x = middle_x * 0.5;
         }
         anyContourFound = true;
     }
@@ -271,7 +283,7 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
 
 //////////////////////////////////////////////////////////////////////////////////////
     // 9) Tiefpass-Filter für sanfte Steuerung
-    middle_x = 0.2 * last_middle_x + 0.8 * middle_x;
+    middle_x = 0.3 * last_middle_x + 0.7 * middle_x;
     last_middle_x = middle_x;
 
     /*
@@ -283,38 +295,19 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     cmd_vel.angular.z = std::max(std::min(cmd_vel.angular.z, 0.5), -0.5);
     */
 
-    // ---------------------------------------------------
-    // 10) Pure-Pursuit-Berechnung der Winkelgeschwindigkeit
-    // ---------------------------------------------------
     if (follow_state)
     {
         // 10.1) Pixel-Offset vom Bildzentrum in x-Richtung
         int offset_px = middle_x - img_center;
-
-        double error = -offset_px * PIXEL_TO_METER;
-
-        // ---- Neuer D-Anteil ----
-        // Statische Variablen speichern den vorherigen Fehler und Zeitpunkt
+        
+        double Kp = 0.00045;
+        double Kd = 0.0004;
+        double error = -offset_px;
         static double prev_error_follow = 0.0;
-        static ros::Time prev_follow_time = ros::Time::now();
         ros::Time current_time = ros::Time::now();
-        double dt = (current_time - prev_follow_time).toSec();
-        double d_error = 0.0;
-        if (dt > 0.0)
-        {
-            d_error = (error - prev_error_follow) / dt;
-        }
-        // Wähle einen D-Verstärkungsfaktor (Kd) – diesen Wert musst du experimentell anpassen
-        double Kp = 0.8;
-        double Kd = 1.2;
-        double control = Kp * error + Kd * d_error;
+        static ros::Time prev_follow_time = ros::Time::now();
 
-        // Begrenze den Reglerausgang
-        if (control > MAX_OMEGA)
-            control = MAX_OMEGA;
-        if (control < MIN_OMEGA)
-            control = MIN_OMEGA;
-        omega = control;
+        omega = computeAngularVelocity(Kp, Kd, error, prev_error_follow, current_time, prev_follow_time);
 
         // Aktualisiere die statischen Variablen für den nächsten Aufruf
         prev_error_follow = error;
@@ -348,13 +341,13 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     //ROS_INFO("Omega: %f", omega);
 
 
-
+    /*
     ros::Time zeit = ros::Time::now();
     ros::Duration elapsed_time = zeit - letzte_zeit;
     letzte_zeit = zeit;
     double fps = 1 / elapsed_time.toSec();
     ROS_INFO_STREAM("Verstrichene Zeit: " << elapsed_time.toSec() << " Sekunden");
-    ROS_INFO("fps: %f", fps);
+    ROS_INFO("fps: %f", fps);*/
 
 }
 
@@ -383,8 +376,7 @@ void distance360Callback(const std_msgs::Float32::ConstPtr& msg)
 
 void directionCallback(const std_msgs::Float32::ConstPtr& msg)
 {
-    obstacle_direction = msg->data;
-    ROS_INFO("Empfangene Richtungsinfo: %f", obstacle_direction);
+    turn_direction = msg->data;
 }
 
 void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
@@ -441,6 +433,7 @@ void timerCallback(const ros::TimerEvent&)
     {
         case SEARCH:
         {
+            follow_state = false;
             
             // Wenn während der Suche eine Linie erkannt wird, direkt in FOLLOW_LINE wechseln.
             if (line_visible)
@@ -457,7 +450,7 @@ void timerCallback(const ros::TimerEvent&)
             {
                 cmd_vel.linear.x = 0.0;
                 cmd_vel.angular.z = 0.3;  // oder ein anderer langsamer Wert
-                ROS_INFO("SEARCH: Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
+                //ROS_INFO("SEARCH: Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
             }
             else // Falls 360° erreicht sind:
             {
@@ -473,10 +466,10 @@ void timerCallback(const ros::TimerEvent&)
         case FOLLOW_LINE:
         {
             follow_state = true;
-            // Falls Hindernis im Front-Bereich < 30 cm => WAIT_CHECK
-            if (distance_front < OBSTACLE_DISTANCE_THRESHOLD)
+            // Falls Hindernis im Front-Bereich  => WAIT_CHECK
+            if (distance_front < OBSTACLE_DISTANCE_THRESHOLD_FRONT)
             {
-                ROS_INFO("Hindernis <30cm vorne -> WAIT_CHECK");
+                ROS_INFO("Hindernis <40cm vorne -> WAIT_CHECK");
                 current_state = WAIT_CHECK;
                 wait_start_time = ros::Time::now();
                 cmd_vel.linear.x = 0.0;
@@ -494,6 +487,7 @@ void timerCallback(const ros::TimerEvent&)
                 {
                     ROS_INFO("Linie verloren -> SEARCH");
                     current_state = SEARCH;
+                    accumulated_yaw = 0.0;
                 }
             }
             break;
@@ -504,7 +498,7 @@ void timerCallback(const ros::TimerEvent&)
             follow_state = false;
             double elapsed = now - wait_start_time.toSec();
             // Wenn Hindernis weg, zurück zu FOLLOW_LINE
-            if (distance_front >= OBSTACLE_DISTANCE_THRESHOLD)
+            if (distance_front >= OBSTACLE_DISTANCE_THRESHOLD_FRONT)
             {
                 ROS_INFO("Hindernis wieder weg -> zurück zu FOLLOW_LINE");
                 current_state = FOLLOW_LINE;
@@ -517,6 +511,15 @@ void timerCallback(const ros::TimerEvent&)
                     ROS_INFO("5s abgelaufen -> TURN_90");
                     current_state = TURN_90;
                     accumulated_yaw = 0.0;
+                    obsticle_direction = turn_direction;
+                    if (obsticle_direction == 1.0)
+                    {
+                        ROS_INFO("Empfangene Richtungsinfo: links -> Objekt rechts");
+                    }
+                    else
+                    {
+                        ROS_INFO("Empfangene Richtungsinfo: rechts -> Objekt links");
+                    }
                 }
             }
             // Stehen bleiben
@@ -528,18 +531,19 @@ void timerCallback(const ros::TimerEvent&)
         case TURN_90:
         {
             follow_state = false;
-            // Drehe dich für TURN_90_DURATION um ~90° nach rechts
+            // Drehe dich für TURN_90_DURATION um ~90°
             
             if (fabs(accumulated_yaw) < M_PI / 2) // Noch nicht 90° gedreht: Weiterdrehen
             {
                 // Konstante Drehung
                 cmd_vel.linear.x = 0.0;
-                cmd_vel.angular.z = 0.6 * obstacle_direction; // Links oder Rechts
+                cmd_vel.angular.z = 0.6 * obsticle_direction; // Links oder Rechts
             }
             else // Wenn 90° erreicht sind:
             {
                 // Fertig => wechsle in AVOID_OBSTACLE
                 ROS_INFO("90° Drehung beendet -> AVOID_OBSTACLE");
+                //ROS_INFO("Turn_90 Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
                 current_state = AVOID_OBSTACLE;
                 accumulated_yaw = 0.0;
             }
@@ -555,7 +559,7 @@ void timerCallback(const ros::TimerEvent&)
 
             follow_state = false;
 
-            if (line_visible && distance_360 > OBSTACLE_DISTANCE_THRESHOLD)
+            if (line_visible && distance_360 > OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE)
             {
                 // Linie gefunden => z. B. kurze Rechtsdrehung oder direkt rein
                 ROS_INFO("Linie wieder da -> FOLLOW_LINE");
@@ -563,41 +567,30 @@ void timerCallback(const ros::TimerEvent&)
             }
             else
             {
-                // Berechne den Fehler (Abweichung vom gewünschten Abstand)
-                double error = distance_360 - (OBSTACLE_DISTANCE_THRESHOLD - 0.1);
-
-                // P-Anteil: Hier wurde zuvor 2 * error verwendet.
-                // Füge jetzt einen D-Anteil hinzu:
-                static double prev_error = 0.0;           // Vorheriger Fehler (statisch, damit er zwischen den Aufrufen erhalten bleibt)
-                static ros::Time prev_time = ros::Time::now();  // Vorheriger Zeitpunkt
-                ros::Time current_time = ros::Time::now();
-                double dt = (current_time - prev_time).toSec();
-                double d_error = 0.0;
-                if (dt > 0.0)
+                if (distance_front > OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE)
                 {
-                    d_error = (error - prev_error) / dt;
+                    double Kp = 1.2;
+                    double Kd = 1.2;
+                    double error = distance_360 - (OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE);
+                    static double prev_error_avoid = 0.0;
+                    ros::Time current_time = ros::Time::now();
+                    static ros::Time prev_avoid_time = ros::Time::now();
+                    
+                    cmd_vel.linear.x  = 0.05; // langsame Vorwärtsfahrt
+                    cmd_vel.angular.z = -obsticle_direction * computeAngularVelocity(Kp, Kd, error, prev_error_avoid, current_time, prev_avoid_time);
+            
+
+                    // Aktualisiere die statischen Variablen für die nächste Iteration
+                    prev_error_avoid = error;
+                    prev_avoid_time  = current_time;
                 }
-
-                // Regler-Gewichte (Kp und Kd) können je nach gewünschtem Verhalten angepasst werden
-                double Kp = 0.8;  // Proportionalanteil
-                double Kd = 1.2;  // Differentialanteil
-
-                double control = Kp * error + Kd * d_error;
-                double angular_command = -obstacle_direction * control;
-        
-                // Begrenze den Ausgang:
-                if (angular_command > MAX_OMEGA)
-                    angular_command = MAX_OMEGA;
-                if (angular_command < MIN_OMEGA)
-                    angular_command = MIN_OMEGA;
-                
-                cmd_vel.linear.x  = 0.05; // langsame Vorwärtsfahrt
-                cmd_vel.angular.z = angular_command;
-        
-
-                // Aktualisiere die statischen Variablen für die nächste Iteration
-                prev_error = error;
-                prev_time  = current_time;
+                else
+                {
+                    // Hindernis zu nah => Warte
+                    cmd_vel.linear.x = 0.0;
+                    cmd_vel.angular.z = 0.0;
+                    ROS_INFO("Hindernis beim Umfahren erkannt.");
+                }
             }
             break;
         }
