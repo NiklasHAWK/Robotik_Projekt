@@ -1,29 +1,33 @@
-#include <ros/ros.h>
-#include <image_transport/image_transport.h>
-#include <sensor_msgs/Image.h>
-#include "opencv2/opencv.hpp"
-#include "cv_bridge/cv_bridge.h"
+#include <ros/ros.h> 							// ROS Hauptbibliothek für Node-Management
+#include <image_transport/image_transport.h> 	// Bibliothek für den Transport von Bildern in ROS
+#include <sensor_msgs/Image.h> 					// Nachrichtentyp für Bilder
+#include "opencv2/opencv.hpp" 					// OpenCV-Bibliothek für Bildverarbeitung
+#include "cv_bridge/cv_bridge.h" 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
 
-// Globale Variable zur Speicherung der Homography-Matrix
-cv::Mat homographyMatrix;
+// Globale Variable zur Speicherung der Homographie-Matrix
+cv::Mat homography_matrix;
+
+// Flag zur Überprüfung, ob die Homographie bereits berechnet wurde
 bool homography_computed = false;
 
-image_transport::Publisher pub;
+// Publisher für das entzerrte Bild in der Vogelperspektive
+image_transport::Publisher birds_eye_image_pub;
 
-void imageCallback(const sensor_msgs::ImageConstPtr& msg) 
+// Callback-Funktion zur Verarbeitung eingehender Bilder
+void birdsEyeImageCallback(const sensor_msgs::ImageConstPtr& msg) 
 {
     try 
     {
-        // Konvertiere ROS-Bildnachricht in OpenCV-Bild
+        // Konvertieren einer ROS-Nachricht in ein OpenCV-Bild
         cv::Mat image = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
         
-
+        // Berechne die Homographie-Matrix nur einmal
         if (!homography_computed) 
         {
 
-             /*
+            /*
            
-            //Zum Bestimmen der Koordinaten wurden folgende Funktionen benutzt. Dazu wurde die untere Kante vom Schachbrett an das untere Kamerabild angepasst
+            //Zur Bestimmung der Koordinaten wurden folgende Funktionen benutzt. Dazu wurde die untere Kante vom Schachbrett an das untere Kamerabild angepasst.
 
             // Zeichne eine vertikale Linie in der Mitte des Bildes zum Ausrichten des Schachbretts
             cv::line(image, cv::Point(image.cols / 2, 0), cv::Point(image.cols / 2, image.rows), cv::Scalar(0, 255, 0), 1);
@@ -43,8 +47,6 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             cv::cvtColor(image, gray_image, cv::COLOR_BGR2GRAY);
 		    cv::equalizeHist(gray_image, gray_image); // Kontrast verbessern
 
-		    
-
             bool found = cv::findChessboardCorners(gray_image, board_sz, corners);
 
             if (!found) {
@@ -53,109 +55,96 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
             }
 
             // Verfeinerung der Ecken auf Subpixel-Genauigkeit
-            // cv::cvtColor(image, gray_image, cv::COLOR_BGR2GRAY);
             cv::cornerSubPix(gray_image, corners, cv::Size(11, 11), cv::Size(-1, -1), cv::TermCriteria(cv::TermCriteria::EPS | cv::TermCriteria::COUNT, 30, 0.1));
 
             // Zeichne die gefundenen Ecken in das Originalbild ein
             cv::drawChessboardCorners(image, board_sz, corners, found);
 
             // Definiere Bild- und Objektpunkte
-            std::vector<cv::Point2f> imgPts(4);
-            std::vector<cv::Point2f> objPts(4);
+            std::vector<cv::Point2f> image_points(4);
+            std::vector<cv::Point2f> object_points(4);
            
            
-            objPts[0] = cv::Point2f((image.cols / 2) + 70, (image.rows / 2) + 330);
-            objPts[1] = cv::Point2f((image.cols / 2) - 70, (image.rows / 2) + 330);
-            objPts[2] = cv::Point2f((image.cols / 2) + 70, (image.rows / 2) + 210);
-            objPts[3] = cv::Point2f((image.cols / 2) - 70, (image.rows / 2) + 210);
+            object_points[0] = cv::Point2f((image.cols / 2) + 70, (image.rows / 2) + 330);
+            object_points[1] = cv::Point2f((image.cols / 2) - 70, (image.rows / 2) + 330);
+            object_points[2] = cv::Point2f((image.cols / 2) + 70, (image.rows / 2) + 210);
+            object_points[3] = cv::Point2f((image.cols / 2) - 70, (image.rows / 2) + 210);
             
-            imgPts[0] = corners[0];
-            imgPts[1] = corners[board_w - 1];
-            imgPts[2] = corners[(board_h - 1) * board_w];
-            imgPts[3] = corners[(board_h - 1) * board_w + board_w - 1];
+            image_points[0] = corners[0];
+            image_points[1] = corners[board_w - 1];
+            image_points[2] = corners[(board_h - 1) * board_w];
+            image_points[3] = corners[(board_h - 1) * board_w + board_w - 1];
            
 
             // Ausgabe der Punkte
-            ROS_INFO("objPts[0] = (%f, %f)", objPts[0].x, objPts[0].y);
-            ROS_INFO("objPts[1] = (%f, %f)", objPts[1].x, objPts[1].y);
-            ROS_INFO("objPts[2] = (%f, %f)", objPts[2].x, objPts[2].y);
-            ROS_INFO("objPts[3] = (%f, %f)", objPts[3].x, objPts[3].y);
-            ROS_INFO("imgPts[0] = (%f, %f)", imgPts[0].x, imgPts[0].y);
-            ROS_INFO("imgPts[1] = (%f, %f)", imgPts[1].x, imgPts[1].y);
-            ROS_INFO("imgPts[2] = (%f, %f)", imgPts[2].x, imgPts[2].y);
-            ROS_INFO("imgPts[3] = (%f, %f)", imgPts[3].x, imgPts[3].y);
+            ROS_INFO("object_points[0] = (%f, %f)", object_points[0].x, object_points[0].y);
+            ROS_INFO("object_points[1] = (%f, %f)", object_points[1].x, object_points[1].y);
+            ROS_INFO("object_points[2] = (%f, %f)", object_points[2].x, object_points[2].y);
+            ROS_INFO("object_points[3] = (%f, %f)", object_points[3].x, object_points[3].y);
+            ROS_INFO("image_points[0] = (%f, %f)", image_points[0].x, image_points[0].y);
+            ROS_INFO("image_points[1] = (%f, %f)", image_points[1].x, image_points[1].y);
+            ROS_INFO("image_points[2] = (%f, %f)", image_points[2].x, image_points[2].y);
+            ROS_INFO("image_points[3] = (%f, %f)", image_points[3].x, image_points[3].y);
            
             // Zeichne den Punkte in das image ein
-             cv::circle(image, objPts[0], 20, cv::Scalar(0, 0, 255), -1);//rot
-             cv::circle(image, objPts[1], 20, cv::Scalar(0, 255, 0), -1);//grün
-             cv::circle(image, objPts[2], 20, cv::Scalar(255, 0, 0), -1);//blau
-             cv::circle(image, objPts[3], 20, cv::Scalar(255, 255, 0), -1);//türkis
-             cv::circle(image, imgPts[0], 20, cv::Scalar(0, 0, 255), -1);//rot
-             cv::circle(image, imgPts[1], 20, cv::Scalar(0, 255, 0), -1);//grün
-             cv::circle(image, imgPts[2], 20, cv::Scalar(255, 0, 0), -1);//blau
-             cv::circle(image, imgPts[3], 20, cv::Scalar(255, 255, 0), -1);//türkis
+             cv::circle(image, object_points[0], 20, cv::Scalar(0, 0, 255), -1);//rot
+             cv::circle(image, object_points[1], 20, cv::Scalar(0, 255, 0), -1);//grün
+             cv::circle(image, object_points[2], 20, cv::Scalar(255, 0, 0), -1);//blau
+             cv::circle(image, object_points[3], 20, cv::Scalar(255, 255, 0), -1);//türkis
+             cv::circle(image, image_points[0], 20, cv::Scalar(0, 0, 255), -1);//rot
+             cv::circle(image, image_points[1], 20, cv::Scalar(0, 255, 0), -1);//grün
+             cv::circle(image, image_points[2], 20, cv::Scalar(255, 0, 0), -1);//blau
+             cv::circle(image, image_points[3], 20, cv::Scalar(255, 255, 0), -1);//türkis
            
             */
             
-            // Definiere Bild- und Objektpunkte
-            std::vector<cv::Point2f> imgPts(4);
-            std::vector<cv::Point2f> objPts(4);
-            /*
-            // Die Koordinaten wurden aus der Ausgabe ausgelsen
-            objPts[0] = cv::Point2f(480 + 175, 675 -20);
-            objPts[1] = cv::Point2f(480 - 175, 675 -20);
-            objPts[2] = cv::Point2f(480 + 175, 675 - 300 - 20);
-            objPts[3] = cv::Point2f(480 - 175, 675 - 300 - 20);
-            */
+            // Definieren von Bild- und Objektpunkten für die Transformation
+            std::vector<cv::Point2f> image_points(4);
+            std::vector<cv::Point2f> object_points(4);
 
-            objPts[0] = cv::Point2f(480 + 180, 675 - 20);          // (480+180, 655) -> (660, 655)
-            objPts[1] = cv::Point2f(480 - 180, 675 - 20);          // (480-180, 655) -> (300, 655)
-            objPts[2] = cv::Point2f(480 + 180, 675 - 300 - 20);     // (480+180, 355) -> (660, 355)
-            objPts[3] = cv::Point2f(480 - 180, 675 - 300 - 20);     // (480-180, 355) -> (300, 355)
+            // Bildpunkte definieren (ursprüngliche Kamerakoordinaten)
+            image_points[0] = cv::Point2f(750.075317, 673.502136);
+            image_points[1] = cv::Point2f(217.013840, 668.596802);
+            image_points[2] = cv::Point2f(653.700684, 554.289307);
+            image_points[3] = cv::Point2f(304.199554, 551.544983);
 
-            imgPts[0] = cv::Point2f(750.075317, 673.502136);
-            imgPts[1] = cv::Point2f(217.013840, 668.596802);
-            imgPts[2] = cv::Point2f(653.700684, 554.289307);
-            imgPts[3] = cv::Point2f(304.199554, 551.544983);
-            
-            
+            // Objektpunkte definieren (Zielkoordinaten in der Vogelperspektive)
+            object_points[0] = cv::Point2f(480 + 180, 675 - 20);
+            object_points[1] = cv::Point2f(480 - 180, 675 - 20);
+            object_points[2] = cv::Point2f(480 + 180, 675 - 300 - 20);
+            object_points[3] = cv::Point2f(480 - 180, 675 - 300 - 20);
 
-            // Berechne Homographie
-            homographyMatrix = cv::getPerspectiveTransform(imgPts, objPts);
+            // Berechnung der Homographie-Matrix für die Transformation
+            homography_matrix = cv::getPerspectiveTransform(image_points, object_points);
             homography_computed = true;
 
             ROS_INFO("Homography computed successfully.");
-            ROS_INFO_STREAM("Homography Matrix: \n" << homographyMatrix);
         }
 
-        cv::Mat birds_image;
+        cv::Mat birds_eye_image;
 
-        // Erzeuge Vogelperspektive
-        cv::warpPerspective(image, birds_image, homographyMatrix, image.size(), cv::INTER_LINEAR);
+        // Anwenden der Perspektivtransformation für die Vogelperspektive
+        cv::warpPerspective(image, birds_eye_image, homography_matrix, image.size(), cv::INTER_LINEAR);
         
+        // Ausgrauen des nicht erfassten Bereichs
         cv::Vec3b gray_value(105, 105, 105);  
 	    cv::Vec3b black_value(0, 0, 0);  
-	    for(int y=0; y<birds_image.rows; y++)
+	    for(int y=0; y<birds_eye_image.rows; y++)
 	    {	
-    	    for(int x=0; x<birds_image.cols; x++)
+    	    for(int x=0; x<birds_eye_image.cols; x++)
     	    {
-	        	if(birds_image.at<cv::Vec3b>(y,x) == black_value)
+	        	if(birds_eye_image.at<cv::Vec3b>(y,x) == black_value)
                 {
-	        		birds_image.at<cv::Vec3b>(cv::Point(x,y)) = gray_value;
+	        		birds_eye_image.at<cv::Vec3b>(cv::Point(x,y)) = gray_value;
 	         	}
 		    }
 	    }
 
-        // Zeige Bilder an
-        //cv::imshow("Chessboard", image);
-        //cv::imshow("Birds_Eye", birds_image);
-        //cv::waitKey(1);
-
-        sensor_msgs::ImagePtr output_msg = cv_bridge::CvImage(msg->header, "bgr8", birds_image).toImageMsg();
-        pub.publish(output_msg);
-	    //ROS_INFO("birdseye_image gepublished.");
-
+        // OpenCV-Bild zurück in eine ROS-Nachricht konvertieren
+        sensor_msgs::ImagePtr birds_eye_image_msg = cv_bridge::CvImage(msg->header, "bgr8", birds_eye_image).toImageMsg();
         
+        // Veröffentlichen des Bildes mit Vogelperspektive
+        birds_eye_image_pub.publish(birds_eye_image_msg);
     } 
     catch (cv_bridge::Exception& e) 
     {
@@ -163,15 +152,23 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char** argv) 
+{
+    // Initialisierung des ROS-Nodes
     ros::init(argc, argv, "birdseye_node");
     ros::NodeHandle nh;
 
-    // Abonniere die Topic mit dem rektifizierten Bild
+    // Erstellung eines ImageTransport für den NodeHandle
     image_transport::ImageTransport it(nh);
-    image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, imageCallback);
-    pub = it.advertise("robotik_projekt/images/birdseye_image", 1);
 
+    // Abonnieren des Topics mit dem entzerrten Bild
+    image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, birdsEyeImageCallback);
+    
+    // Erstellung eines Publishers für das Bild in der Vogelperspektive
+    birds_eye_image_pub = it.advertise("robotik_projekt/images/birds_eye_image", 1);
+
+    // ROS-Loop zur Verarbeitung eingehender Nachrichten
     ros::spin();
+    
     return 0;
 }
