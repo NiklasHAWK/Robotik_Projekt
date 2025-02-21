@@ -1,8 +1,9 @@
 #include <ros/ros.h> 							// ROS Hauptbibliothek für Node-Management
+#include <opencv2/opencv.hpp> 					// OpenCV-Bibliothek für Bildverarbeitung
+#include <cv_bridge/cv_bridge.h> 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
 #include <image_transport/image_transport.h> 	// Bibliothek für den Transport von Bildern in ROS
-#include <sensor_msgs/Image.h> 					// Nachrichtentyp für Bilder
-#include "opencv2/opencv.hpp" 					// OpenCV-Bibliothek für Bildverarbeitung
-#include "cv_bridge/cv_bridge.h" 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
+#include <sensor_msgs/Image.h> 					// Nachrichtentyp für Bilddaten
+
 
 // Globale Variable zur Speicherung der Homographie-Matrix
 cv::Mat homography_matrix;
@@ -14,18 +15,18 @@ bool homography_computed = false;
 image_transport::Publisher birds_eye_image_pub;
 
 // Callback-Funktion zur Verarbeitung eingehender Bilder
-void birdsEyeImageCallback(const sensor_msgs::ImageConstPtr& msg) 
+void birdsEyeImageCallback(const sensor_msgs::ImageConstPtr& image_msg) 
 {
     try 
     {
         // Konvertieren einer ROS-Nachricht in ein OpenCV-Bild
-        cv::Mat image = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8)->image;
+        cv::Mat image = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::BGR8)->image;
         
         // Berechne die Homographie-Matrix nur einmal
         if (!homography_computed) 
         {
 
-            /*
+            /* Code zur Bestimmung der Koordinaten für die Homographie-Matrix
            
             //Zur Bestimmung der Koordinaten wurden folgende Funktionen benutzt. Dazu wurde die untere Kante vom Schachbrett an das untere Kamerabild angepasst.
 
@@ -141,10 +142,14 @@ void birdsEyeImageCallback(const sensor_msgs::ImageConstPtr& msg)
 	    }
 
         // OpenCV-Bild zurück in eine ROS-Nachricht konvertieren
-        sensor_msgs::ImagePtr birds_eye_image_msg = cv_bridge::CvImage(msg->header, "bgr8", birds_eye_image).toImageMsg();
+        sensor_msgs::ImagePtr birds_eye_image_msg = cv_bridge::CvImage(image_msg->header, "bgr8", birds_eye_image).toImageMsg();
         
         // Veröffentlichen des Bildes mit Vogelperspektive
         birds_eye_image_pub.publish(birds_eye_image_msg);
+
+        //cv::imshow("Original", image);
+        //cv::imshow("birds_eye_image", birds_eye_image);
+        //cv::waitKey(1);
     } 
     catch (cv_bridge::Exception& e) 
     {
@@ -164,7 +169,7 @@ int main(int argc, char** argv)
     // Abonnieren des Topics mit dem entzerrten Bild
     image_transport::Subscriber sub = it.subscribe("robotik_projekt/images/rectified_image", 1, birdsEyeImageCallback);
     
-    // Erstellung eines Publishers für das Bild in der Vogelperspektive
+    // Publisher für das Bild in der Vogelperspektive
     birds_eye_image_pub = it.advertise("robotik_projekt/images/birds_eye_image", 1);
 
     // ROS-Loop zur Verarbeitung eingehender Nachrichten

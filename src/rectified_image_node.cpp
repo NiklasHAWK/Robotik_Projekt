@@ -1,8 +1,8 @@
-#include "ros/ros.h" 							// ROS Hauptbibliothek für Node-Management
-#include "image_transport/image_transport.h" 	// Bibliothek für den Transport von Bildern in ROS
-#include "sensor_msgs/CompressedImage.h" 		// Nachrichtentyp für komprimierte Bilder
-#include "opencv2/opencv.hpp" 					// OpenCV-Bibliothek für Bildverarbeitung
-#include "cv_bridge/cv_bridge.h" 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
+#include <ros/ros.h> 							// ROS Hauptbibliothek für Node-Management
+#include <opencv2/opencv.hpp> 					// OpenCV-Bibliothek für Bildverarbeitung
+#include <cv_bridge/cv_bridge.h> 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
+#include <image_transport/image_transport.h> 	// Bibliothek für den Transport von Bildern in ROS
+#include <sensor_msgs/CompressedImage.h> 		// Nachrichtentyp für komprimierte Bilder
 
 
 // Publisher für das entzerrte Bild

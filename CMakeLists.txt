@@ -149,7 +149,6 @@ include_directories(
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
  add_executable(rectified_image_node src/rectified_image_node.cpp)
- add_executable(initial_launch src/initial_launch.cpp)
  add_executable(birdseye_node src/birdseye_node.cpp)
  add_executable(birdseye_with_lidar_node src/birdseye_with_lidar_node.cpp)
  add_executable(follow_line_node src/follow_line_node.cpp)

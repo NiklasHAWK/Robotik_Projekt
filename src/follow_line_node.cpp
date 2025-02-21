@@ -1,131 +1,119 @@
-#include "ros/ros.h"
-#include "image_transport/image_transport.h"
-#include "sensor_msgs/Image.h"
-#include <geometry_msgs/Twist.h>
-#include "cv_bridge/cv_bridge.h"
-#include <opencv2/opencv.hpp>
-#include <opencv2/imgproc/imgproc.hpp>
+#include <ros/ros.h> 							// ROS Hauptbibliothek für Node-Management
+#include <opencv2/opencv.hpp> 					// OpenCV-Bibliothek für Bildverarbeitung
+#include <opencv2/imgproc/imgproc.hpp> 			// OpenCV-Bibliothek für Bildverarbeitung (Filter, Morphologien)
+#include <cv_bridge/cv_bridge.h> 				// cv_bridge für die Konvertierung zwischen ROS und OpenCV-Bildern
+#include <image_transport/image_transport.h> 	// Bibliothek für den Transport von Bildern in ROS
+#include <sensor_msgs/Image.h> 					// Nachrichtentyp für Bilddaten
+#include <geometry_msgs/Twist.h> 				// Nachrichtentyp für Bewegungsbefehle (linear, angular)
+#include <nav_msgs/Odometry.h> 					// Nachrichtentyp für Odometrie-Daten
+#include <tf/tf.h> 								// Transformationen für Quaternionen und Euler-Winkel
+#include <std_msgs/Float32.h> 					// Nachrichtentyp für Float-Werte
+#include <math.h> 								// Mathematische Funktionen
+
 #include <opencv2/highgui/highgui.hpp>
-#include "std_msgs/Float32.h"
-#include "nav_msgs/Odometry.h"
-#include "tf/tf.h"
-#include <cmath>
 
+// -----------------------------------------
+//   GLOBALE KONSTANTEN
+// -----------------------------------------
+static const double MIN_OMEGA      = -0.5;  // Begrenzung Winkelgeschwindigkeit
+static const double MAX_OMEGA      =  0.5;  // Begrenzung Winkelgeschwindigkeit
+static const double LINEAR_SPEED   =  0.08; // Konstante Vorwärtsgeschwindigkeit
 
+// Schwellenwerte für Hinderniserkennung (in Metern)
+static const double OBSTACLE_DISTANCE_THRESHOLD_FRONT = 0.4; // Hindernis direkt vor dem Roboter
+static const double OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE = 0.2; // Mindestabstand beim Umfahren
 
+static const double WAIT_DURATION = 3.0;    // Wartezeit in Sekunden
 
-ros::Time letzte_zeit;
+// -----------------------------------------
+//   ZUSTANDS-MASCHINE
+// -----------------------------------------
+enum robot_state {
+    SEARCH,         // Nach einer Linie suchen
+    FOLLOW_LINE,    // Linie folgen
+    WAIT_CHECK,     // Warten bei Hindernis
+    TURN_90,        // Drehung um 90° zum Umfahren des Hindernisses
+    AVOID_OBSTACLE, // Hindernis umfahren
+};
 
+static robot_state current_state = SEARCH; // Startzustand: Nach der Linie suchen
 
+// Timestamps für die einzelnen Zustände
+static ros::Time wait_start_time;   // Zeitpunkt, wenn WAIT_CHECK startet
+static ros::Time turn90_start_time; // Zeitpunkt, wenn TURN_90 startet
+static ros::Time search_start_time; // Zeitpunkt, wenn SEARCH startet
 
 
 // -----------------------------------------
 //   GLOBALE PARAMETER
 // -----------------------------------------
-static const double MIN_OMEGA      = -0.5;     // Begrenzung Winkelgeschwindigkeit
-static const double MAX_OMEGA      =  0.5;
-static const double LINEAR_SPEED   =  0.08;    // Konstante Vorwärtsgeschwindigkeit
+bool follow_state = false; // Gibt an, ob der Roboter aktiv der Linie folgt
 
-// 30 cm = 0.3 m
-static const double OBSTACLE_DISTANCE_THRESHOLD_FRONT = 0.4;
-static const double OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE = 0.2;
+ros::Publisher cmd_vel_pub; // Publisher für Bewegungsbefehle ("/cmd_vel")
 
-// 5 Sekunden Wartezeit
-static const double WAIT_DURATION = 3.0;
+// Winkelgeschwindigkeit und letzte Mittelwertspeicherung
+double omega = 0.0;             // Winkelgeschwindigkeit
+static int last_middle_x = 480; // Tiefpass-gefilterte X-Position der Spurmitte
 
-bool follow_state = false;
+bool line_visible = false;      // Gibt an, ob eine Linie erkannt wurde
 
-// Globale Variablen für die Odometry-basierte Drehung im SEARCH-Zustand
-double accumulated_yaw = 0.0;
-
-// Richtung Hindernisumfahren
-float turn_direction = -1.0; // Standard: rechts
-float obsticle_direction = -1.0; // Standard: rechts
+// Lidar-Daten: Abstand zu Hindernissen
+float distance_front = std::numeric_limits<float>::infinity(); // Abstand zum nächsten Hindernis vorne
+float distance_360   = std::numeric_limits<float>::infinity(); // Minimaler Abstand im gesamten Scanbereich
 
 
+// Globale Variablen für die Odometry-basierte Drehung
+double accumulated_yaw = 0.0; // Aufsummierte Drehung
 
-
-// -----------------------------------------
-//   ZUSTANDS-MASCHINE
-// -----------------------------------------
-enum RobotState {
-    SEARCH,
-    FOLLOW_LINE,
-    WAIT_CHECK,
-    TURN_90,
-    AVOID_OBSTACLE,
-};
-
-static RobotState current_state = FOLLOW_LINE;
-
-// Timestamp, wenn WAIT_CHECK startet
-static ros::Time wait_start_time;
-
-// Timestamp, wenn TURN_90 startet
-static ros::Time turn90_start_time;
-
-// Timestamp, wenn FOLLOW_LINE startet
-static ros::Time search_start_time;
-
-
-// -----------------------------------------
-//   GLOBALE STEUER-VARIABLEN
-// -----------------------------------------
-ros::Publisher cmd_vel_pub;
-double omega = 0.0;             // Winkelgeschw. aus Pure Pursuit
-static int last_middle_x = 480; // Letzter ermittelter Mittelwert für die Spurmitte (Tiefpass-Filter)
-bool line_visible = false;      // Linie erkannt?
-
-// Empfange Distanz (Front + 360°) vom LiDAR-Node
-float distance_front = std::numeric_limits<float>::infinity();
-float distance_360   = std::numeric_limits<float>::infinity();
-
-
-
+// Hindernisvermeidung: Standardmäßig nach rechts ausweichen
+float turn_direction = -1.0;
+float obsticle_direction = -1.0;
 
 
 // -----------------------------------------
 //   HILFSFUNKTIONEN
 // -----------------------------------------
-std::pair<cv::Rect, cv::Rect> findLeftAndRightContours(const std::vector<cv::Rect>& boundingBoxes)
+// Funktion zur Identifikation der linken und rechten Begrenzungslinien
+std::pair<cv::Rect, cv::Rect> findLeftAndRightContours(const std::vector<cv::Rect>& bounding_boxes)
 {
-    cv::Rect leftRect, rightRect;
-    int minX = std::numeric_limits<int>::max();
-    int maxX = -1;
+    cv::Rect left_rectangle, right_rectangle;
+    int min_x = std::numeric_limits<int>::max();
+    int max_x = -1;
 
-    for (auto& box : boundingBoxes)
+    for (auto& box : bounding_boxes)
     {
-        int centerX = box.x + box.width / 2;
-        if (centerX < minX)
+        int center_x = box.x + box.width / 2;
+        if (center_x < min_x)
         {
-            minX = centerX;
-            leftRect = box;
+            min_x = center_x;
+            left_rectangle = box;
         }
-        if (centerX > maxX)
+        if (center_x > max_x)
         {
-            maxX = centerX;
-            rightRect = box;
+            max_x = center_x;
+            right_rectangle = box;
         }
     }
-    return std::make_pair(leftRect, rightRect);
+    return std::make_pair(left_rectangle, right_rectangle);
 }
 
+// Berechnung der Winkelgeschwindigkeit basierend auf dem Fehler (PD-Regler)
 double computeAngularVelocity(double Kp, double Kd, double error, double &prev_error, ros::Time current_time, ros::Time &prev_time)
 {
-    double dt = (current_time - prev_time).toSec();
+    double dt = (current_time - prev_time).toSec(); // Zeitdifferenz berechnen
     double d_error = 0.0;
     if (dt > 0.0)
     {
-        d_error = (error - prev_error) / dt;
+        d_error = (error - prev_error) / dt; // Berechnung der Änderungsrate des Fehlers
     }
     double control = Kp * error + Kd * d_error;
     
+    // Begrenzung der Winkelgeschwindigkeit
     if (control > MAX_OMEGA)
         control = MAX_OMEGA;
     if (control < MIN_OMEGA)
         control = MIN_OMEGA;
     
-        ROS_INFO("control: %f", control);
     return control;
 }
 
@@ -133,59 +121,37 @@ double computeAngularVelocity(double Kp, double Kd, double error, double &prev_e
 // -----------------------------------------
 //   CALLBACKS
 // -----------------------------------------
-void imageCallback(const sensor_msgs::ImageConstPtr& msg)
+// Callback zur Verarbeitung der Bilddaten
+void imageCallback(const sensor_msgs::ImageConstPtr& image_msg)
 {
-    // 1) ROS-Bild in OpenCV-Bild konvertieren
+    // Konvertieren der ROS-Bildnachricht in OpenCV-Bild
     cv_bridge::CvImagePtr cv_ptr;
     try {
-        cv_ptr = cv_bridge::toCvCopy(msg, sensor_msgs::image_encodings::BGR8);
+        cv_ptr = cv_bridge::toCvCopy(image_msg, sensor_msgs::image_encodings::BGR8);
     } 
     catch (cv_bridge::Exception& e) {
         ROS_ERROR("cv_bridge exception: %s", e.what());
         return;
     }
-    cv::Mat img = cv_ptr->image;
 
-    /*
-    // 2) In Graustufen konvertieren
-    cv::Mat gray;
-    cv::cvtColor(img, gray, cv::COLOR_BGR2GRAY);
+    cv::Mat birds_eye_image = cv_ptr->image;
 
-    // 3) Gauß-Filter zum Glätten
-    cv::Mat gray_blur;
-    cv::GaussianBlur(gray, gray_blur, cv::Size(5, 5), 0);
-
-    // 4) Otsu-Threshold (binäre Umwandlung)
-    cv::Mat binary;
-    cv::threshold(gray_blur, binary, 0, 255, cv::THRESH_BINARY | cv::THRESH_OTSU);
-
-    // 5) Morphologische Operationen (Öffnen und Schließen)
-    cv::Mat morphOtsu;
-    cv::Mat kernel_morph = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
-    cv::morphologyEx(binary, morphOtsu, cv::MORPH_OPEN, kernel_morph);
-    cv::morphologyEx(morphOtsu, morphOtsu, cv::MORPH_CLOSE, kernel_morph);
-
-    */
-
-
-    // =============== NEU: HSV-Teil für Gelb-Erkennung ===============
-    // a) In HSV konvertieren
+    // Konvertieren des Bildes in den HSV-Farbraum
     cv::Mat hsv;
-    cv::cvtColor(img, hsv, cv::COLOR_BGR2HSV);
+    cv::cvtColor(birds_eye_image, hsv, cv::COLOR_BGR2HSV);
 
-    // b) Schwellenwerte für Gelb definieren (mögliche Feinjustierung nötig)
-    cv::Scalar lowerY(20, 100, 50);   // untere Grenze Gelb (H=20°, S=80, V=80)
-    cv::Scalar upperY(60, 255, 200); // obere Grenze Gelb (H=30°, S=255, V=255)
-    cv::Mat maskYellow;
-    cv::inRange(hsv, lowerY, upperY, maskYellow);
+    // Schwellenwerte für Gelb definieren
+    cv::Scalar lower_value(20, 100, 50);
+    cv::Scalar upper_value(60, 255, 200);
+    cv::Mat mask_yellow;
+    cv::inRange(hsv, lower_value, upper_value, mask_yellow);
 
-    // c) Morph-Operationen auf maskYellow
-    cv::Mat morphHSV;
+    // Morph-Operationen auf mask_yellow, um Rauschen zu entfernen
+    cv::Mat morph_hsv;
     cv::Mat kernel_hsv = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3,3));
-    cv::morphologyEx(maskYellow, morphHSV, cv::MORPH_OPEN, kernel_hsv);
-    cv::morphologyEx(morphHSV, morphHSV, cv::MORPH_CLOSE, kernel_hsv);
+    cv::morphologyEx(mask_yellow, morph_hsv, cv::MORPH_OPEN, kernel_hsv);
+    cv::morphologyEx(morph_hsv, morph_hsv, cv::MORPH_CLOSE, kernel_hsv);
 
-    // d) Ecken übermalen auch im HSV-Bild (damit identischer Bildbereich ignoriert wird)
     // Definiere die Punkte für die linke Begrenzungslinie
     cv::Point left_pt1(0, 335);       // Linker Punkt
     cv::Point left_pt2(210, 710);     // Rechter Punkt
@@ -194,112 +160,82 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
     cv::Point right_pt1(960, 335);    // Linker Punkt
     cv::Point right_pt2(740, 710);    // Rechter Punkt
 
-    cv::Mat hsvMask = cv::Mat::zeros(morphHSV.size(), CV_8UC1);
+    cv::Mat mask_hsv = cv::Mat::zeros(morph_hsv.size(), CV_8UC1);
 
-    // Zeichne das Polygon für die linke untere Ecke in Weiß
-    std::vector<cv::Point> left_polygon = {
-        cv::Point(0, morphHSV.rows), 
-        left_pt1, 
-        left_pt2, 
-        cv::Point(morphHSV.cols / 2, morphHSV.rows)
-    };
-    std::vector<cv::Point> right_polygon = {
-        cv::Point(morphHSV.cols, morphHSV.rows),
-        right_pt1,
-        right_pt2,
-        cv::Point(morphHSV.cols / 2, morphHSV.rows)
-    };
+    // Zeichnen der Polygone in weiß
+    std::vector<cv::Point> left_polygon = {cv::Point(0, morph_hsv.rows), left_pt1, left_pt2, cv::Point(morph_hsv.cols / 2, morph_hsv.rows)};
+    std::vector<cv::Point> right_polygon = {cv::Point(morph_hsv.cols, morph_hsv.rows), right_pt1, right_pt2, cv::Point(morph_hsv.cols / 2, morph_hsv.rows)};
+    
     // Untere Bereiche ausmaskieren
-    cv::fillConvexPoly(hsvMask, left_polygon, cv::Scalar(255));
-    cv::fillConvexPoly(hsvMask, right_polygon, cv::Scalar(255));
-    cv::rectangle(hsvMask, cv::Point(0, 710), cv::Point(morphHSV.cols, morphHSV.rows), cv::Scalar(255), cv::FILLED);
+    cv::fillConvexPoly(mask_hsv, left_polygon, cv::Scalar(255));
+    cv::fillConvexPoly(mask_hsv, right_polygon, cv::Scalar(255));
+    cv::rectangle(mask_hsv, cv::Point(0, 710), cv::Point(morph_hsv.cols, morph_hsv.rows), cv::Scalar(255), cv::FILLED);
 
-    // Setze diese Bereiche auf 0 in morphHSV (wie bei Otsu)
-    morphHSV.setTo(0, hsvMask);
+    // Setzt diese Bereiche auf 0 in morph_hsv
+    morph_hsv.setTo(0, mask_hsv);
 
-    // =============== Kombinieren: nur wo Otsu UND Gelb erkannt wird ===============
-    //cv::Mat masksCombined;
-    //cv::bitwise_and(morphOtsu, morphHSV, masksCombined);
-    // => In "combined" ist nur noch weiß, wo BEIDE Masken übereinstimmen
-
-    // ----------------------------------------------------------------------
-    // 6) Konturensuche (nach dem Übermalen)
-    // ----------------------------------------------------------------------
+    // Bestimmung der Konturen der gelben Spurmarkierung
     std::vector<std::vector<cv::Point>> contours;
-    cv::findContours(morphHSV, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+    cv::findContours(morph_hsv, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
 
-    // 7) Bounding Boxes ermitteln und filtern (nach Fläche)
-    std::vector<cv::Rect> boundingBoxes;
-    double minArea = 1000.0; 
+    // Bounding Boxes ermitteln und filtern nach Fläche
+    std::vector<cv::Rect> bounding_boxes;
+    double min_area = 1000.0; 
     for (const auto& contour : contours)
     {
         double area = cv::contourArea(contour);
-        if (area > minArea)
+        if (area > min_area)
         {
-            boundingBoxes.push_back(cv::boundingRect(contour));
+            bounding_boxes.push_back(cv::boundingRect(contour));
         }
     }
 
-    // 8) Fahrspurmitte bestimmen
-    int img_center = img.cols / 2;
-    int middle_x = img_center;  // Fallback, falls keine Kontur
+    // Fahrspurmitte bestimmen
+    int image_center = birds_eye_image.cols / 2;
+    int middle_x = image_center;  // Fallback, falls keine Kontur
 
-    bool anyContourFound = false;
+    bool any_contour_found = false;
 
-    if (boundingBoxes.size() >= 2)
+    if (bounding_boxes.size() >= 2) // Falls zwei Linien gefunden wurden
     {
-        auto pairLR = findLeftAndRightContours(boundingBoxes);
-        cv::Rect leftRect  = pairLR.first;
-        cv::Rect rightRect = pairLR.second;
+        auto pair_left_right_rectangle = findLeftAndRightContours(bounding_boxes);
+        cv::Rect left_rectangle  = pair_left_right_rectangle.first;
+        cv::Rect right_rectangle = pair_left_right_rectangle.second;
 
-        int leftCenterX  = leftRect.x + leftRect.width / 2;
-        int rightCenterX = rightRect.x + rightRect.width / 2;
-        middle_x = (leftCenterX + rightCenterX) / 2;
-        anyContourFound = true;
+        int left_rectangle_center_x  = left_rectangle.x + left_rectangle.width / 2;
+        int right_rectangle_center_x = right_rectangle.x + right_rectangle.width / 2;
+        middle_x = (left_rectangle_center_x + right_rectangle_center_x) / 2;
+        any_contour_found = true;
     }
-    else if (boundingBoxes.size() == 1)
+    else if (bounding_boxes.size() == 1) // Falls nur eine Linie sichtbar ist
     {
-        // Nur eine Kontur => verwende deren Mittelpunkt
-        cv::Rect singleBox = boundingBoxes[0];
-        middle_x = singleBox.x + singleBox.width / 2;
-        if(middle_x > 480)
-        {
+        cv::Rect single_rectangle = bounding_boxes[0];
+        middle_x = single_rectangle.x + single_rectangle.width / 2;
+        
+        if(middle_x > 480)  // Stärker in die Richtung der Kurve lenken
             middle_x = middle_x * 1.5;
-        }
         else
-        {
             middle_x = middle_x * 0.5;
-        }
-        anyContourFound = true;
+
+        any_contour_found = true;
     }
     else
     {
-        anyContourFound = false;
+        any_contour_found = false;
     }
 
-    line_visible = anyContourFound;
+    line_visible = any_contour_found;
 
-    //ROS_INFO("line_visible: %s", line_visible ? "true" : "false");
-
-//////////////////////////////////////////////////////////////////////////////////////
-    // 9) Tiefpass-Filter für sanfte Steuerung
+    // Tiefpass-Filter für sanftere Steuerung
     middle_x = 0.3 * last_middle_x + 0.7 * middle_x;
     last_middle_x = middle_x;
 
-    /*
-    // 10) Steuerfehler und Bewegung
-    int error = middle_x - img_center;
-    geometry_msgs::Twist cmd_vel;
-    cmd_vel.linear.x = 0.08;               
-    cmd_vel.angular.z = -0.0005 * error;   
-    cmd_vel.angular.z = std::max(std::min(cmd_vel.angular.z, 0.5), -0.5);
-    */
-
     if (follow_state)
     {
-        // 10.1) Pixel-Offset vom Bildzentrum in x-Richtung
-        int offset_px = middle_x - img_center;
+        // Pixel-Offset vom Bildzentrum in x-Richtung
+        int offset_px = middle_x - image_center;
         
+        // Übergabeparameter für die Drehwinkelberechnung
         double Kp = 0.00045;
         double Kd = 0.0004;
         double error = -offset_px;
@@ -307,89 +243,75 @@ void imageCallback(const sensor_msgs::ImageConstPtr& msg)
         ros::Time current_time = ros::Time::now();
         static ros::Time prev_follow_time = ros::Time::now();
 
+        // Drehwinkelberechnung
         omega = computeAngularVelocity(Kp, Kd, error, prev_error_follow, current_time, prev_follow_time);
 
-        // Aktualisiere die statischen Variablen für den nächsten Aufruf
+        // Aktualisieren der statischen Variablen für den nächsten Aufruf
         prev_error_follow = error;
         prev_follow_time = current_time;
     }
 
-    // 11) Debug-Visualisierung
+    // Visualisierung
     // Zeichne Bounding Boxes
-    for (auto& box : boundingBoxes)
+    for (auto& box : bounding_boxes)
     {
-        cv::rectangle(img, box, cv::Scalar(0, 0, 255), 2);
+        cv::rectangle(birds_eye_image, box, cv::Scalar(0, 0, 255), 2);
     }
-    // Zeichne linke/rechte Linie (blau) und Mittel-Linie (grün)
-    if (boundingBoxes.size() >= 2)
+    // Zeichnen linker/rechter Linie (blau) und Mittel-Linie (grün)
+    if (bounding_boxes.size() >= 2)
     {
-        auto pairLR = findLeftAndRightContours(boundingBoxes);
-        int lx = pairLR.first.x + pairLR.first.width  / 2;
-        int rx = pairLR.second.x + pairLR.second.width / 2;
-        cv::line(img, cv::Point(lx, 0), cv::Point(lx, img.rows), cv::Scalar(255,0,0), 2);
-        cv::line(img, cv::Point(rx, 0), cv::Point(rx, img.rows), cv::Scalar(255,0,0), 2);
+        auto pair_left_right_rectangle = findLeftAndRightContours(bounding_boxes);
+        int left_x = pair_left_right_rectangle.first.x + pair_left_right_rectangle.first.width  / 2;
+        int right_x = pair_left_right_rectangle.second.x + pair_left_right_rectangle.second.width / 2;
+        cv::line(birds_eye_image, cv::Point(left_x, 0), cv::Point(left_x, birds_eye_image.rows), cv::Scalar(255,0,0), 2);
+        cv::line(birds_eye_image, cv::Point(right_x, 0), cv::Point(right_x, birds_eye_image.rows), cv::Scalar(255,0,0), 2);
     }
-    cv::line(img, cv::Point(middle_x, 0), cv::Point(middle_x, img.rows), cv::Scalar(0,255,0), 2);
+    cv::line(birds_eye_image, cv::Point(middle_x, 0), cv::Point(middle_x, birds_eye_image.rows), cv::Scalar(0,255,0), 2);
     
     // Anzeigen
-    cv::imshow("Original mit Bounding-Boxen", img);
-    // 1) morphOtsu, 2) morphHSV, 3) combined
-    //cv::imshow("OTSU morph", morphOtsu);
-    cv::imshow("HSV morph", morphHSV);
-    //cv::imshow("Combined OTSU+HSV", masksCombined);
+    cv::imshow("Original mit Bounding-Boxen", birds_eye_image);
+    cv::imshow("HSV morph", morph_hsv);
     cv::waitKey(1);
-    //ROS_INFO("Omega: %f", omega);
-
-
-    /*
-    ros::Time zeit = ros::Time::now();
-    ros::Duration elapsed_time = zeit - letzte_zeit;
-    letzte_zeit = zeit;
-    double fps = 1 / elapsed_time.toSec();
-    ROS_INFO_STREAM("Verstrichene Zeit: " << elapsed_time.toSec() << " Sekunden");
-    ROS_INFO("fps: %f", fps);*/
-
 }
 
-void distanceFrontCallback(const std_msgs::Float32::ConstPtr& msg)
+// Callback zur Verarbeitung der Entfernungsdaten nach vorne
+void distanceFrontCallback(const std_msgs::Float32::ConstPtr& distance_msg)
 {
-    // Wenn msg->data = -1 => kein Hindernis
-    if (msg->data < 0.0) 
-    {
+    // Wenn distance_msg->data = -1 => kein Hindernis
+    if (distance_msg->data < 0.0) 
         distance_front = std::numeric_limits<float>::infinity();
-    } else 
-    {
-        distance_front = msg->data;
-    }
+    else 
+        distance_front = distance_msg->data;
 }
 
-void distance360Callback(const std_msgs::Float32::ConstPtr& msg)
+// Callback zur Verarbeitung der Entfernungsdaten um den Roboter
+void distance360Callback(const std_msgs::Float32::ConstPtr& distance_msg)
 {
-    if (msg->data < 0.0) 
-    {
+    // Wenn distance_msg->data = -1 => kein Hindernis
+    if (distance_msg->data < 0.0) 
         distance_360 = std::numeric_limits<float>::infinity();
-    } else 
-    {
-        distance_360 = msg->data;
-    }
+    else 
+        distance_360 = distance_msg->data;
 }
 
-void directionCallback(const std_msgs::Float32::ConstPtr& msg)
+// Callback zur Verarbeitung der Drehrichtung
+void directionCallback(const std_msgs::Float32::ConstPtr& direction_msg)
 {
-    turn_direction = msg->data;
+    turn_direction = direction_msg->data;
 }
 
-void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
+// Callback zur Verarbeitung der Odometriedaten
+void odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg)
 {
-    // Extrahiere den Yaw aus der Quaternion
-    tf::Quaternion q(
-        msg->pose.pose.orientation.x,
-        msg->pose.pose.orientation.y,
-        msg->pose.pose.orientation.z,
-        msg->pose.pose.orientation.w);
-    tf::Matrix3x3 m(q);
+    // Extrahieren der Werte aus der Quaternion
+    tf::Quaternion quaternion(
+        odom_msg->pose.pose.orientation.x,
+        odom_msg->pose.pose.orientation.y,
+        odom_msg->pose.pose.orientation.z,
+        odom_msg->pose.pose.orientation.w);
+    tf::Matrix3x3 quaternion_matrix(quaternion);
     double roll, pitch, yaw;
-    m.getRPY(roll, pitch, yaw);
+    quaternion_matrix.getRPY(roll, pitch, yaw);
 
     // Statische Variablen zur Akkumulation
     static bool first_odom = true;
@@ -399,89 +321,77 @@ void odomCallback(const nav_msgs::Odometry::ConstPtr& msg)
     {
         prev_yaw = yaw;
         first_odom = false;
-        // Setze accumulated_yaw auf 0 (falls nötig)
         accumulated_yaw = 0.0;
     }
     else
     {
-        // Berechne die Änderung zwischen dem aktuellen und dem vorherigen Yaw
-        double delta = yaw - prev_yaw;
-        // Normalisiere den Winkel, damit er im Bereich [-π, π] liegt
-        if (delta > M_PI)
-            delta -= 2 * M_PI;
-        else if (delta < -M_PI)
-            delta += 2 * M_PI;
-        // Akkumuliere den absoluten Drehbetrag
-        accumulated_yaw += fabs(delta);
+        // Berechnen der Änderung zwischen dem aktuellen und dem vorherigen Yaw
+        double delta_yaw = yaw - prev_yaw;
+        // Normalisieren des Winkels, damit er im Bereich [-π, π] liegt
+        if (delta_yaw > M_PI)
+            delta_yaw -= 2 * M_PI;
+        else if (delta_yaw < -M_PI)
+            delta_yaw += 2 * M_PI;
+        // Akkumulieren des absoluten Drehbetrages
+        accumulated_yaw += fabs(delta_yaw);
         prev_yaw = yaw;
     }
 }
 
-
-
-
 // -----------------------------------------
-//   STATE MACHINE (Timer-Callback mit z. B. 30 Hz)
+//   STATE MACHINE (Timer-Callback mit 30 Hz)
 // -----------------------------------------
 void timerCallback(const ros::TimerEvent&)
 {
-    // Erstelle cmd_vel
-    geometry_msgs::Twist cmd_vel;
+    geometry_msgs::Twist cmd_vel; // Bewegungsbefehl für den Roboter
     double now = ros::Time::now().toSec();
 
+    // Zustandsmaschine zur Steuerung des Roboters
     switch (current_state)
     {
-        case SEARCH:
+        case SEARCH: // Nach einer Linie suchen
         {
             follow_state = false;
             
-            // Wenn während der Suche eine Linie erkannt wird, direkt in FOLLOW_LINE wechseln.
+            // Falls eine Linie erkannt wurde, wechsle zu FOLLOW_LINE
             if (line_visible)
             {
                 ROS_INFO("Linie gefunden -> FOLLOW_LINE");
                 current_state = FOLLOW_LINE;
-                // Reset der Odometry-Drehvariablen
-                accumulated_yaw = 0.0;
+                accumulated_yaw = 0.0; // Zurücksetzen der Drehungsakkumulation
                 break;
             }
-
-                
             if (accumulated_yaw < 2 * M_PI) // Noch nicht 360° gedreht: Weiterdrehen
             {
                 cmd_vel.linear.x = 0.0;
-                cmd_vel.angular.z = 0.3;  // oder ein anderer langsamer Wert
-                //ROS_INFO("SEARCH: Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
+                cmd_vel.angular.z = 0.3; // Langsame Drehung
             }
             else // Falls 360° erreicht sind:
             {
                 ROS_INFO("360 Grad gedreht, aber keine Linie gefunden. Warte...");
-                // Hier kannst du den Roboter anhalten oder weitere Maßnahmen ergreifen.
-                // Du könntest auch den Zustand SEARCH beibehalten, um auf spätere Linieneingänge zu reagieren.
                 cmd_vel.linear.x = 0.0;
                 cmd_vel.angular.z = 0.0;
             }
             break;
         }
 
-        case FOLLOW_LINE:
+        case FOLLOW_LINE: // Linie folgen
         {
             follow_state = true;
-            // Falls Hindernis im Front-Bereich  => WAIT_CHECK
-            if (distance_front < OBSTACLE_DISTANCE_THRESHOLD_FRONT)
+            if (distance_front < OBSTACLE_DISTANCE_THRESHOLD_FRONT) // Falls Hindernis im Front-Bereich  => WAIT_CHECK
             {
-                ROS_INFO("Hindernis <40cm vorne -> WAIT_CHECK");
-                current_state = WAIT_CHECK;
-                wait_start_time = ros::Time::now();
+                ROS_INFO("Hindernisentfernung vorne < 40cm -> WAIT_CHECK");
                 cmd_vel.linear.x = 0.0;
                 cmd_vel.angular.z = 0.0;
+                current_state = WAIT_CHECK;
+                wait_start_time = ros::Time::now(); // Starte die Wartezeit
             }
-            else
+            else // Normaler Liniefolge
             {
-                // Normaler Liniefolge
                 if (line_visible)
                 {
                     cmd_vel.linear.x  = LINEAR_SPEED;
-                    cmd_vel.angular.z = omega;
+                    cmd_vel.angular.z = omega; // PD-kontrollierte Drehung
                 }
                 else
                 {
@@ -493,33 +403,28 @@ void timerCallback(const ros::TimerEvent&)
             break;
         }
 
-        case WAIT_CHECK:
+        case WAIT_CHECK: // Warten bei Hindernis
         {
             follow_state = false;
-            double elapsed = now - wait_start_time.toSec();
-            // Wenn Hindernis weg, zurück zu FOLLOW_LINE
-            if (distance_front >= OBSTACLE_DISTANCE_THRESHOLD_FRONT)
+            double elapsed_time = now - wait_start_time.toSec(); // Verstrichene Wartezeit berechnen
+            
+            if (distance_front >= OBSTACLE_DISTANCE_THRESHOLD_FRONT) // Wenn Hindernis weg, zurück zu FOLLOW_LINE
             {
                 ROS_INFO("Hindernis wieder weg -> zurück zu FOLLOW_LINE");
                 current_state = FOLLOW_LINE;
             }
             else
             {
-                // Hindernis noch da => nach 5 s in TURN_90
-                if (elapsed >= WAIT_DURATION)
+                if (elapsed_time >= WAIT_DURATION) // Hindernis nach 3s noch da => TURN_90
                 {
-                    ROS_INFO("5s abgelaufen -> TURN_90");
+                    ROS_INFO("3s abgelaufen -> TURN_90");
                     current_state = TURN_90;
                     accumulated_yaw = 0.0;
                     obsticle_direction = turn_direction;
                     if (obsticle_direction == 1.0)
-                    {
                         ROS_INFO("Empfangene Richtungsinfo: links -> Objekt rechts");
-                    }
                     else
-                    {
                         ROS_INFO("Empfangene Richtungsinfo: rechts -> Objekt links");
-                    }
                 }
             }
             // Stehen bleiben
@@ -528,10 +433,9 @@ void timerCallback(const ros::TimerEvent&)
             break;
         }
 
-        case TURN_90:
+        case TURN_90: // Drehung um 90° zum Umfahren des Hindernisses
         {
             follow_state = false;
-            // Drehe dich für TURN_90_DURATION um ~90°
             
             if (fabs(accumulated_yaw) < M_PI / 2) // Noch nicht 90° gedreht: Weiterdrehen
             {
@@ -543,32 +447,28 @@ void timerCallback(const ros::TimerEvent&)
             {
                 // Fertig => wechsle in AVOID_OBSTACLE
                 ROS_INFO("90° Drehung beendet -> AVOID_OBSTACLE");
-                //ROS_INFO("Turn_90 Akkumulierter Drehwinkel = %f rad", accumulated_yaw);
                 current_state = AVOID_OBSTACLE;
                 accumulated_yaw = 0.0;
             }
             break;
         }
 
-        case AVOID_OBSTACLE:
+        case AVOID_OBSTACLE: // Hindernis umfahren
         {
-            // Idee: 
-            //  - Prüfe distance_360, damit wir ~30cm halten.
-            //  - Solange line_visible == false, manövrieren wir.
-            //  - Wenn line_visible == true => zurück zu FOLLOW_LINE (mit leichter Rechtsdrehung).
-
             follow_state = false;
 
+            // Falls die Linie wieder sichtbar ist und der Abstand groß genug ist, wechsle zu FOLLOW_LINE
             if (line_visible && distance_360 > OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE)
             {
-                // Linie gefunden => z. B. kurze Rechtsdrehung oder direkt rein
                 ROS_INFO("Linie wieder da -> FOLLOW_LINE");
                 current_state = FOLLOW_LINE;
             }
             else
             {
+                // Solange der Abstand vor dem Roboter groß genug ist, fahre langsam weiter
                 if (distance_front > OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE)
                 {
+                    // Übergabeparameter für die Drehwinkelberechnung
                     double Kp = 1.2;
                     double Kd = 1.2;
                     double error = distance_360 - (OBSTACLE_DISTANCE_THRESHOLD_AVOIDANCE);
@@ -579,8 +479,7 @@ void timerCallback(const ros::TimerEvent&)
                     cmd_vel.linear.x  = 0.05; // langsame Vorwärtsfahrt
                     cmd_vel.angular.z = -obsticle_direction * computeAngularVelocity(Kp, Kd, error, prev_error_avoid, current_time, prev_avoid_time);
             
-
-                    // Aktualisiere die statischen Variablen für die nächste Iteration
+                    // Aktualisieren der statischen Variablen für den nächsten Aufruf
                     prev_error_avoid = error;
                     prev_avoid_time  = current_time;
                 }
@@ -596,33 +495,40 @@ void timerCallback(const ros::TimerEvent&)
         }
     }
 
-    // Befehl publizieren
-    cmd_vel_pub.publish(cmd_vel);
+    //cmd_vel_pub.publish(cmd_vel); // Befehl publizieren
 }
 
 int main(int argc, char** argv)
 {
+    // Initialisierung des ROS-Nodes
     ros::init(argc, argv, "follow_line_node");
     ros::NodeHandle nh;
+
+    ROS_INFO("follow_line_node gestartet.");
+    ROS_INFO("Linie suchen -> SEARCH");
+
+    // Erstellung eines ImageTransport für den NodeHandle
     image_transport::ImageTransport it(nh);
 
-    // Erstelle den Odometry-Subscriber:
+    // Subscriber für die Odometrie
     ros::Subscriber odom_sub = nh.subscribe("/odom", 1, odomCallback);
 
-    // Subscriber für Kamera/Bird's-Eye
-    image_transport::Subscriber img_sub = it.subscribe("robotik_projekt/images/birdseye_image", 1, imageCallback);
+    // Subscriber für das Bird's Eye View Bild
+    image_transport::Subscriber img_sub = it.subscribe("robotik_projekt/images/birds_eye_image", 1, imageCallback);
 
-    // LiDAR-Abstände (Front / 360°)
-    ros::Subscriber front_sub = nh.subscribe("robotik_projekt/obstacle/distance_front", 1, distanceFrontCallback);
-    ros::Subscriber surround_sub = nh.subscribe("robotik_projekt/obstacle/distance_360", 1, distance360Callback);
-    ros::Subscriber dir_sub = nh.subscribe("robotik_projekt/obstacle/direction", 1, directionCallback);
+    // Subscriber für LiDAR-Abstände und Drehrichtung
+    ros::Subscriber distance_front_sub = nh.subscribe("robotik_projekt/obstacle/distance_front", 1, distanceFrontCallback);
+    ros::Subscriber distance_360_sub = nh.subscribe("robotik_projekt/obstacle/distance_360", 1, distance360Callback);
+    ros::Subscriber turn_direction_sub = nh.subscribe("robotik_projekt/obstacle/turn_direction", 1, directionCallback);
 
-    // Publisher für /cmd_vel
+    // Publisher für Fahrtbefehl
     cmd_vel_pub = nh.advertise<geometry_msgs::Twist>("/cmd_vel", 1);
 
-    // Timer: State Machine (z. B. 10-30 Hz)
+    // Timer: State Machine
     ros::Timer control_timer = nh.createTimer(ros::Duration(1.0/30.0), timerCallback); // 30 Hz
 
+    // ROS-Loop zur Verarbeitung eingehender Nachrichten
     ros::spin();
+
     return 0;
 }
